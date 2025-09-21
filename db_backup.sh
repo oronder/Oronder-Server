@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ -z "$B2_APPLICATION_KEY_ID" ] || [ -z "$B2_APPLICATION_KEY" ] || [ -z "$B2_BUCKET" ]; then
-  echo "B2_APPLICATION_KEY_ID or B2_APPLICATION_KEY is not set; exiting." >&2
+  echo "B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY or B2_BUCKET is not set; exiting." >&2
   exit 1
 fi
 
