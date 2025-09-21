@@ -6,7 +6,7 @@ if [ -z "$B2_APPLICATION_KEY_ID" ] || [ -z "$B2_APPLICATION_KEY" ] || [ -z "$B2_
 fi
 
 FILENAME="$(date +%Y-%m-%d)".tar.gz
-pg_dump -Fc "postgresql://postgres:${POSTGRES_PASSWORD}@${POSTGRES_HOSTNAME}:5432/postgres" | gzip > "$FILENAME"
+pg_dump -Fc "postgresql://postgres:${POSTGRES_PASSWORD}@oronder-db:5432/postgres" | gzip > "$FILENAME"
 B2_OUTPUT=$(b2 file upload --no-progress oronder-postgres-backup "$FILENAME" "$FILENAME")
 rm "$FILENAME"
 
