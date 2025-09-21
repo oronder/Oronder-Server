@@ -13,7 +13,7 @@ services:
     depends_on:
       - oronder-db
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - DISCORD_TOKEN=${DISCORD_TOKEN}
       - DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET}
       - API_URL=${API_URL}
@@ -55,7 +55,7 @@ services:
     depends_on:
       - oronder-db
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - B2_APPLICATION_KEY_ID=${B2_APPLICATION_KEY_ID}
       - B2_APPLICATION_KEY=${B2_APPLICATION_KEY}
 
