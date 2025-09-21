@@ -1,4 +1,4 @@
-FROM postgres:16-alpine
+FROM postgres:17-alpine
 
 WORKDIR /root
 ENV B2_ACCOUNT_INFO="/root/.b2/b2_account_info.sqlite"
