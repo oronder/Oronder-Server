@@ -10,7 +10,7 @@
 3. Rename `.env.example` to `.env`, and fill in values for `DISCORD_TOKEN`, `DISCORD_CLIENT_SECRET`, `API_URL` at
    minimum.
 4. Run `docker compose up -d` to start the server.
-5. If you have issues, run `docker logs -f oronder_server` to check logs.`
+5. If you have issues, run `docker logs -f oronder_server` to check logs.
 6. Note that the frontend does not currently support alternative backends out of the box. As of now, you will need to
    manually set the api url in the Foundry addon.
 
@@ -90,4 +90,5 @@ SET timezone = 'UTC';
 ALTER TABLE missions
     ALTER date_time TYPE timestamptz,
     ALTER date_time SET DEFAULT now();
+
 ```
