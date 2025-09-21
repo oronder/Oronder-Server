@@ -1,0 +1,1 @@
+docker exec -it oronder-db bash -c 'psql -U postgres -d postgres'

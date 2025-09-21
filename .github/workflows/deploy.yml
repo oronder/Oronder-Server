@@ -1,0 +1,74 @@
+name: Build & Push container on push to main
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: { }
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/oronder
+  BACKUP_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/oronder-backup
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write  # allow pushing to GHCR with GITHUB_TOKEN
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags
+        id: meta
+        run: |
+          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Normalize owner to lowercase for GHCR
+        run: |
+          OWNER_LC="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "IMAGE_NAME=ghcr.io/${OWNER_LC}/oronder" >> $GITHUB_ENV
+          echo "BACKUP_IMAGE_NAME=ghcr.io/${OWNER_LC}/oronder-backup" >> $GITHUB_ENV
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.SHORT_SHA }}
+            ${{ env.IMAGE_NAME }}:main
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push (backup)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./db_backup.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.BACKUP_IMAGE_NAME }}:${{ steps.meta.outputs.SHORT_SHA }}
+            ${{ env.BACKUP_IMAGE_NAME }}:main
+            ${{ env.BACKUP_IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
