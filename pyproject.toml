@@ -14,7 +14,7 @@ dependencies = [
     "brotlipy==0.7.0",
     "d20==1.1.2",
     "dateparser==1.2.2",
-    "fastapi==0.117.1",
+    "fastapi==0.119.0",
     "httpx==0.28.1",
     "Jinja2==3.1.6",
     "markdownify==1.2.0",
