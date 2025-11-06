@@ -5,7 +5,7 @@ from typing import List, Optional, Literal, Any, Annotated, Tuple
 import d20
 from d20 import RollResult
 from discord.utils import snowflake_time
-from pydantic import Field, AliasChoices, BeforeValidator
+from pydantic import Field, AliasChoices, BeforeValidator, field_validator
 from sqlalchemy import text, any_, func, select, TextClause
 
 from database import Session, CampaignTable, XpAdjustmentsTable
@@ -226,6 +226,10 @@ class Weapon(Attack):
     # noinspection PyTypeHints
     attack_modes: List[Literal[*attack_modes_machine]]
     type: Literal["weapon"] = "weapon"
+
+    @field_validator("attack_modes", mode="before")
+    def filter_attack_modes(self, v):
+        return [i for i in v if i in attack_modes_machine]
 
 
 class Spell(Attack):
