@@ -228,7 +228,8 @@ class Weapon(Attack):
     type: Literal["weapon"] = "weapon"
 
     @field_validator("attack_modes", mode="before")
-    def filter_attack_modes(self, v):
+    @classmethod
+    def filter_attack_modes(cls, v):
         return [i for i in v if i in attack_modes_machine]
 
 
