@@ -2,7 +2,8 @@ import json
 import os
 import pprint
 import re
-import urllib.parse
+import time
+from urllib import parse
 from math import floor, ceil  # noqa: F401
 from pathlib import Path
 
@@ -18,41 +19,62 @@ ENABLED = bool(json_data_url)
 
 
 class Stub:
-    depth = 0
+    counter = 0
+    last_hit = time.time()
+
+    def _raise_on_recur(self):
+        self.counter += 1
+        cur = time.time()
+        if self.last_hit + 60 < cur:
+            self.counter = 0
+            self.last_hit = cur
+        elif self.counter > 200:
+            self.counter = 0
+            raise Exception("Dummy!")
 
     def __getitem__(self, key):
-        self.depth += 1
-
-        if self.depth > 100:
-            logger.critical(f"gi {key=}")
+        logger.warning(f"__getitem__ {key=}")
+        self._raise_on_recur()
         return self
 
     def __setitem__(self, key, value):
+        logger.warning(f"__setitem__ {key=} {value=}")
+        self._raise_on_recur()
         pass
 
     def __eq__(self, other):
-        logger.critical("eq")
+        logger.warning(f"__eq__ {other=}")
+        self._raise_on_recur()
         return False
 
-    def get(self, _):
-        logger.critical("get")
+    def get(self, key):
+        logger.warning(f"get {key=}")
+        self._raise_on_recur()
         return self
 
     def __contains__(self, item):
-        logger.critical("contains")
+        logger.warning(f"__contains__ {item=} ")
+        self._raise_on_recur()
         return False
 
     def __hash__(self):
-        logger.critical("hash")
+        logger.warning("hash")
+        self._raise_on_recur()
         return hash(id(self))
 
     def __iter__(self):
+        logger.warning("__iter__")
+        self._raise_on_recur()
         return iter([])
 
     def __getattr__(self, key):
+        logger.warning(f"__getattr__ {key=}")
+        self._raise_on_recur()
         return self
 
     def __call__(self, *args, **kwargs):
+        logger.warning(f"__call__ {args=} {kwargs=}")
+        self._raise_on_recur()
         return self
 
 
@@ -71,7 +93,7 @@ def load_json(key):
         with data_dir.open(encoding="utf-8") as f:
             return json.load(f)
     else:
-        response = httpx.get(urllib.parse.urljoin(json_data_url, file))
+        response = httpx.get(parse.urljoin(json_data_url, f"/data/{file}"))
         assert response.is_success
         logger.info(f"{file} downloaded.")
         with open(data_dir, "wb") as f:

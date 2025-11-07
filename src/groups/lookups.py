@@ -55,6 +55,7 @@ class Lookups(Cog):
         "lookup", "Lookup Game Info", contexts={InteractionContextType.guild}
     )
     if system.ENABLED:
+
         @lookup_group.command(name="item", description="Looks up an item.")
         @option(
             "item",

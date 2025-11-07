@@ -53,20 +53,20 @@ variants_dict = {
     for g in generics
     for v in variant_table["magicvariant"]
     if v["inherits"]["source"] in system.legal_sources
-       and any(
+    and any(
         all(g.get(k) == v for (k, v) in requirement.items())
         for requirement in v["requires"]
     )
-       and ("excludes" not in v or all(g.get(k) != v for (k, v) in v["excludes"].items()))
+    and ("excludes" not in v or all(g.get(k) != v for (k, v) in v["excludes"].items()))
 }
 
 magic_items = [
     (i["name"], i.get("rarity", "unknown"))
     for i in item_table["item"]
     if i["source"] in system.legal_sources
-       and "$" not in i.get("type", [])
-       and i.get("age") not in system.illegal_ages
-       and i["name"] not in variants_dict.keys()
+    and "$" not in i.get("type", [])
+    and i.get("age") not in system.illegal_ages
+    and i["name"] not in variants_dict.keys()
 ]
 
 items_to_rarity = dict(
@@ -552,7 +552,9 @@ def get_item(item_name: str):
             join_list(
                 [
                     item.get("weaponCategory"),
-                    system.ITEM_TYPE_JSON_TO_ABV.get(item.get("type"), "").split(" ")[0],
+                    system.ITEM_TYPE_JSON_TO_ABV.get(item.get("type"), "").split(" ")[
+                        0
+                    ],
                 ],
                 ", ",
             )

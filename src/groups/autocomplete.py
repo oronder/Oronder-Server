@@ -407,7 +407,8 @@ def rule_autocomplete(ctx: AutocompleteContext):
     movement = [f"Movement: {m}" for m in movement]
 
     sage_advice = [
-        f"SAC: {system.strip_template(sa)}" for sa in rules.sage_advice_compendium.keys()
+        f"SAC: {system.strip_template(sa)}"
+        for sa in rules.sage_advice_compendium.keys()
     ]
 
     return search(

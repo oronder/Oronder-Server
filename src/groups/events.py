@@ -99,19 +99,20 @@ class Events(Cog):
                 .one_or_none()
             )
 
-            if mission:
-                await self.bot.socket_namespace.start_stop_session(
-                    after.guild.id,
-                    {
-                        "name": mission.title,
-                        "id": mission.id,
-                        "start_ts": int(after.start_time.timestamp() * 1000),
-                        "status": "start" if active else "stop",
-                    },
-                )
-            else:
-                logger.warning(f" Mission for Guild ID {after.guild.id} with Event ID {after.id} not found!")
-
+        if mission:
+            await self.bot.socket_namespace.start_stop_session(
+                after.guild.id,
+                {
+                    "name": mission.title,
+                    "id": mission.id,
+                    "start_ts": int(after.start_time.timestamp() * 1000),
+                    "status": "start" if active else "stop",
+                },
+            )
+        else:
+            logger.warning(
+                f" Mission for Guild ID {after.guild.id} with Event ID {after.id} not found!"
+            )
 
     @Cog.listener()
     async def on_raw_scheduled_event_user_add(

@@ -29,7 +29,7 @@ def generate_rule_embed(rule: str):
         title, ruling = next(
             (system.strip_template(k), v)
             for (k, v) in sage_advice_compendium.items()
-            if system.strip_template(k).startswith(rule[len("SAC: "):])
+            if system.strip_template(k).startswith(rule[len("SAC: ") :])
         )
         fields = system.handle_description_entries(None, ruling, name="")
         footer = "Sage Advice Compendium"

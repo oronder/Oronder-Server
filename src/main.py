@@ -1,11 +1,9 @@
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 from copy import copy
 
 import socketio
-import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
@@ -102,6 +100,3 @@ if logger.level <= logging.DEBUG:
 #             out.write(profiler.output(renderer=renderer))
 #         return response
 #     return await call_next(request)
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=int(os.environ["UVICORN_PORT"]), reload=True)

@@ -331,7 +331,7 @@ class Admin(Cog):
                  In the text box search for *Use Application Commands* and enable it.""")
 
         await ctx.respond(
-            content=f"Oronder has been successfully initialized. Your Foundry VTT token is:\n`{token}`"
+            content=f"Oronder has been successfully initialized. Set your Foundry VTT token with:\n`await game.settings.set('oronder', 'auth', '{token}')`"
             + "\nYou may regenerate this at any time using `/admin reset_token`.",
             ephemeral=True,
         )
@@ -617,7 +617,7 @@ class Admin(Cog):
             session.commit()
 
         await ctx.respond(
-            f"Your Foundry VTT token is:\n`{token}`\nDo not share this with anyone.",
+            f"Your Foundry VTT token can be set with:\n`await game.settings.set('oronder', 'auth', '{token}')`\nDo not share this with anyone.",
             ephemeral=True,
         )
 

@@ -33,7 +33,7 @@ class Base(DeclarativeBase, MappedAsDataclass):
     pass
 
 
-database_url = f"postgresql://postgres:{os.environ['POSTGRES_PASSWORD']}@{os.getenv('POSTGRES_HOSTNAME','oronder-db')}:5432/postgres"
+database_url = f"postgresql://postgres:{os.environ['POSTGRES_PASSWORD']}@{os.getenv('POSTGRES_HOSTNAME', 'oronder-db')}:5432/postgres"
 engine = create_engine(database_url)
 Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
