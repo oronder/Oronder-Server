@@ -17,9 +17,12 @@ gunzip -c db_backup.tar.gz | pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 
 After you've started the container, open a psql shell with:
 ```bash
-docker exec -it oronder-db bash -c 'psql -U postgres -d postgres
+docker exec -it oronder-db bash -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```
 and then run
+```bash
+psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+```
 ```psql
 CREATE DATABASE fastapi_user;
 ```
