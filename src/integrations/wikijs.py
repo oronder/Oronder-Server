@@ -12,12 +12,12 @@ from utils import getLogger
 
 logger = getLogger(__name__)
 
-_base_url = os.getenv("WIKIJS_GRAPHQL_URL")
+_url = os.getenv("WIKIJS_URL")
 _token = os.getenv("WIKIJS_TOKEN")
 
-valid = _base_url and _token
+valid = _url and _token
 
-_url = parse.urljoin(_base_url, "graphql")
+_url = parse.urljoin(_url, "graphql")
 _headers = {
     "Accept-Encoding": "gzip, deflate",
     "Content-Type": "application/json",
