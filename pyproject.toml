@@ -22,7 +22,7 @@ dependencies = [
     "numpy==2.3.3",
     "Pillow==11.3.0",
     "psutil==7.1.0",
-    "psycopg2-binary==2.9.10",
+    "psycopg2-binary==2.9.12",
     "py-cord @ git+https://github.com/Pycord-Development/pycord",
     "pydantic==2.11.9",
     "python-socketio==5.14.2",
