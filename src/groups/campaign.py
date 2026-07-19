@@ -23,6 +23,7 @@ from groups.autocomplete import (
     campaign_remove_pc_autocomplete,
 )
 from models.actor import Actor
+from systems import validate_actor_row
 from utils import capitalize_title, getLogger
 
 logger = getLogger(__name__)
@@ -209,7 +210,7 @@ class Campaign(Cog):
             embed.add_field(name="Voice Channel", value=voice_channel.mention)
 
             actors = [
-                Actor.model_validate(a)
+                validate_actor_row(a)
                 for a in session.query(ActorTable)
                 .filter_by(guild_id=ctx.guild_id)
                 .filter(ActorTable.id.in_(campaign.actor_ids))
@@ -220,7 +221,9 @@ class Campaign(Cog):
                     name=actor.name,
                     value="/".join(
                         [f"{k.title()} {v['levels']}" for k, v in actor.classes.items()]
-                    ),
+                    )
+                    if isinstance(actor, Actor)
+                    else actor.desc_string(),
                 )
 
         await ctx.respond(embed=embed, ephemeral=True)

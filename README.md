@@ -1,6 +1,32 @@
 # Oronder Server
 
-## Installation
+Discord + FastAPI backend for the [Oronder Foundry VTT module](https://github.com/oronder/Oronder).
+Supports D&D 5e, Pathfinder 2e and Call of Cthulhu 7e (see `SYSTEMS.md`).
+
+## Quickstart (no Discord app, no configuration)
+
+```sh
+uv sync
+uv run python scripts/dev.py   # bootstraps Postgres, serves on :65435
+```
+
+With no `DISCORD_TOKEN` set the server runs with a built-in fake Discord
+layer: real py-cord objects, no network. Drive it via the `/testing/*`
+endpoints and connect a local Foundry (served on `localhost:65434`) exactly
+like production. Details in `TESTING.md`.
+
+Run the test suite (bootstraps its own throwaway Postgres):
+
+```sh
+uv run pytest              # server-only tests
+uv run pytest tests/e2e    # optional: real Foundry VTT end-to-end
+```
+
+No secrets live in this repository: deployment credentials all come from
+`.env` (see `.env.example`), and the shared-key admin endpoints stay
+disabled until `ADMIN_API_KEY` / `UPDATE_DISCORD_KEY` are set.
+
+## Production installation
 
 1. Create your discord bot (https://discord.com/developers/applications)
     1. On the __OAuth2__ tab, set your redirect URL to `{API_URL}/init`

@@ -18,11 +18,11 @@ from pydantic import field_validator, AwareDatetime
 from database import Session, CampaignTable
 from database.actor_table import ActorTable
 from database.guild_settings_table import GuildSettingsTable
-from system.items import format_number
+from dnd.items import format_number
 from models import CampaignModel
-from models.actor import Actor
 from models.base_model import OronderBaseModel
 from models.systems import System
+from systems import BaseSystemActor, get_system_for_actor, validate_actor_row
 from utils import mention_safe, get_image_bytes, getLogger, check_permissions
 
 logger = getLogger(__name__)
@@ -61,14 +61,15 @@ class Mission(OronderBaseModel):
             not self.channel_override and self.channel_or_thread_id == self.message_id
         )
 
-    def get_actors(self, standby=False) -> List[Actor]:
+    def get_actors(self, standby=False) -> List[BaseSystemActor]:
+        """Actors validated with the model matching each row's game system."""
         pcs = self.pcs_standby if standby else self.pcs
         if not pcs:
             return []
         try:
             with Session() as session:
                 actors_standby = [
-                    Actor.model_validate(a)
+                    validate_actor_row(a)
                     for a in session.query(ActorTable)
                     .filter_by(guild_id=self.guild_id)
                     .filter(ActorTable.id.in_(pcs))
@@ -117,17 +118,20 @@ class Mission(OronderBaseModel):
         if static:
             return embed
         pc_strings = []
-        level_sum = 0
+        levels = []
         for pc in self.get_actors():
             pc_strings.append(f"- {pc.name} | {pc.desc_string()}")
-            level_sum += pc.details.level
+            level = get_system_for_actor(pc).actor_level(pc)
+            if level is not None:
+                levels.append(level)
         for pc in self.get_actors(standby=True):
             pc_strings.append(f"- *{pc.name} | {pc.desc_string()}*")
         if len(pc_strings):
             embed.add_field(name="Characters", value="\n".join(pc_strings))
-            embed.add_field(
-                name="Average Level", value=f"{level_sum / len(self.pcs):.1f}"
-            )
+            if levels:
+                embed.add_field(
+                    name="Average Level", value=f"{sum(levels) / len(self.pcs):.1f}"
+                )
 
         if self.xp:
             embed.add_field(name="Experience", value=format_number(self.xp, "XP"))

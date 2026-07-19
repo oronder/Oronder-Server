@@ -1,9 +1,7 @@
 import json
-import os
 import pprint
 import re
-import time
-from urllib import parse
+import urllib.parse
 from math import floor, ceil  # noqa: F401
 from pathlib import Path
 
@@ -14,76 +12,10 @@ from typing import Optional
 
 logger = getLogger(__name__)
 
-json_data_url = os.getenv("JSON_DATA_URL")
-ENABLED = bool(json_data_url)
-
-
-class Stub:
-    counter = 0
-    last_hit = time.time()
-
-    def _raise_on_recur(self):
-        self.counter += 1
-        cur = time.time()
-        if self.last_hit + 60 < cur:
-            self.counter = 0
-            self.last_hit = cur
-        elif self.counter > 200:
-            self.counter = 0
-            raise Exception("Dummy!")
-
-    def __getitem__(self, key):
-        logger.warning(f"__getitem__ {key=}")
-        self._raise_on_recur()
-        return self
-
-    def __setitem__(self, key, value):
-        logger.warning(f"__setitem__ {key=} {value=}")
-        self._raise_on_recur()
-        pass
-
-    def __eq__(self, other):
-        logger.warning(f"__eq__ {other=}")
-        self._raise_on_recur()
-        return False
-
-    def get(self, key):
-        logger.warning(f"get {key=}")
-        self._raise_on_recur()
-        return self
-
-    def __contains__(self, item):
-        logger.warning(f"__contains__ {item=} ")
-        self._raise_on_recur()
-        return False
-
-    def __hash__(self):
-        logger.warning("hash")
-        self._raise_on_recur()
-        return hash(id(self))
-
-    def __iter__(self):
-        logger.warning("__iter__")
-        self._raise_on_recur()
-        return iter([])
-
-    def __getattr__(self, key):
-        logger.warning(f"__getattr__ {key=}")
-        self._raise_on_recur()
-        return self
-
-    def __call__(self, *args, **kwargs):
-        logger.warning(f"__call__ {args=} {kwargs=}")
-        self._raise_on_recur()
-        return self
-
-
-stub = Stub()
+json_data_url = "https://5e.oronder.com/data/"
 
 
 def load_json(key):
-    if not ENABLED:
-        return stub
     file = f"{key}.json"
     data_dir = Path.cwd() / "data" / file
     data_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -93,7 +25,7 @@ def load_json(key):
         with data_dir.open(encoding="utf-8") as f:
             return json.load(f)
     else:
-        response = httpx.get(parse.urljoin(json_data_url, f"/data/{file}"))
+        response = httpx.get(urllib.parse.urljoin(json_data_url, file))
         assert response.is_success
         logger.info(f"{file} downloaded.")
         with open(data_dir, "wb") as f:
@@ -146,7 +78,7 @@ def evaluate_and_replace_parentheses(expression: str):
     )
 
 
-def cleanse_damage_roll(dmg: str):
+def clense_damage_roll(dmg: str):
     terms = ["floor", "ceil"]
     out = re.sub(r"\[\w+]", "", dmg)
     while any(term in out for term in terms):
@@ -202,6 +134,7 @@ def handle_description_entries(
                 string=e,
             )
 
+            # TODO how does this bit work??
             template_double_curly = re.sub(
                 pattern=r"\{\{item.([^{}]+)}}",
                 repl=lambda m: join_list(entity.get(m.group(1)), " ", " and "),

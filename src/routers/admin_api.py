@@ -1,3 +1,4 @@
+import os
 import secrets
 
 from discord import Bot
@@ -11,7 +12,17 @@ from utils import getLogger
 
 logger = getLogger(__name__)
 router = APIRouter(prefix="/admin")
-key = "6YvBnmaLk7lvsawEGz8hVG8Cru_ZAmFPALaJxeYrz4g"
+
+
+def _require_admin_key(authorization: str):
+    key = os.environ.get("ADMIN_API_KEY", "")
+    if not key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ADMIN_API_KEY is not configured",
+        )
+    if not secrets.compare_digest(authorization, key):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
 
 async def get_bot():
@@ -21,8 +32,7 @@ async def get_bot():
 
 @router.get("/bot/info")
 async def get_bot_info(authorization: str = Header(), bot: Bot = Depends(get_bot)):
-    if not secrets.compare_digest(authorization, key):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+    _require_admin_key(authorization)
 
     with Session() as session:
         guild_settings = session.execute(select(GuildSettingsTable)).scalars().all()

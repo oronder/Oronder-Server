@@ -1,7 +1,7 @@
 from discord import Embed
 
-import system
-from system import strip_template
+import dnd
+from dnd import strip_template
 from utils import join_list, truncate
 
 _schools_of_magic = {
@@ -24,17 +24,17 @@ _all_spells = [
         "spells/spells-xge",
         "spells/spells-bmt",
     ]
-    for spell in system.load_json(f)["spell"]
+    for spell in dnd.load_json(f)["spell"]
 ]
 
 spell_names = [spell["name"] for spell in _all_spells]
-_spell_target_data = system.load_json("spells/foundry")["spell"]
-_spell_source_lookups = system.load_json("generated/gendata-spell-source-lookup")
+_spell_target_data = dnd.load_json("spells/foundry")["spell"]
+_spell_source_lookups = dnd.load_json("generated/gendata-spell-source-lookup")
 
 _spells_to_class_data = {
     k: v
     for (source, spell_data) in _spell_source_lookups.items()
-    if source.upper() in system.legal_sources
+    if source.upper() in dnd.legal_sources
     for (k, v) in spell_data.items()
 }
 
@@ -43,7 +43,7 @@ _spells_to_classes = {
         c
         for from_source in v.get("class", v.get("classVariant", {})).values()
         for c in from_source
-        if from_source and c in system.legal_classes
+        if from_source and c in dnd.legal_classes
     ]
     for (spell_name, v) in _spells_to_class_data.items()
 }
@@ -57,13 +57,13 @@ _spells_to_subclasses = {
                 class_name: [
                     subclass
                     for (subclass_source, subclasss_by_source) in subclass_data.items()
-                    if subclass_source in system.legal_sources
+                    if subclass_source in dnd.legal_sources
                     for subclass in subclasss_by_source.keys()
                 ]
                 for (class_source, subclasses_by_class) in spell_data[
                     "subclass"
                 ].items()
-                if class_source in system.legal_sources
+                if class_source in dnd.legal_sources
                 for (class_name, subclass_data) in subclasses_by_class.items()
             }.items()
             if v
@@ -185,7 +185,7 @@ def generate_spell_embed(spell_name):
         inline=False,
     )
 
-    for n, v, i in system.handle_description_entries(s, s["entries"]):
+    for n, v, i in dnd.handle_description_entries(s, s["entries"]):
         embed.add_field(name=n, value=v, inline=i)
 
     for h in s.get("entriesHigherLevel", []):

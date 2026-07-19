@@ -4,19 +4,20 @@ from datetime import timedelta
 from typing import Callable
 
 from discord import AutocompleteContext, ApplicationContext
-from pydantic import TypeAdapter
+from pydantic import ValidationError
 from sqlalchemy import select, func, or_, any_, and_
 from sqlalchemy.exc import ArgumentError
 
-import system
+import dnd
 from database import Session, CampaignTable, XpAdjustmentsTable
 from database.actor_table import ActorTable
 from database.guild_settings_table import GuildSettingsTable
 from database.missions import MissionTable
-from system import spells, ABILITIES, SKILLS, OTHER_ROLLABLES, rules
-from system.backgrounds import backgrounds
-from system.items import attack_modes_reversed
-from models.actor import Tools, Details, Actor, Attack, Spell
+from dnd import spells, SKILLS, rules
+from dnd.backgrounds import backgrounds
+from dnd.items import attack_modes_reversed
+from models.actor import Details, Actor, Spell
+from systems import DEFAULT_SYSTEM_ID, get_system, system_id_of
 from utils import timezones, chris_discord_id, getLogger, truncate
 
 logger = getLogger(__name__)
@@ -230,7 +231,13 @@ def attack_autocomplete(ctx: AutocompleteContext):
     with Session() as session:
         attacks = session.scalars(stmt).one_or_none()
 
-    return search(ctx.value, [Attack.model_validate(w).name for w in attacks], sorted)
+    # weapons are raw JSONB and system-specific; every system's weapons carry
+    # a name, so read it directly instead of validating with the 5e model
+    return search(
+        ctx.value,
+        [w["name"] for w in (attacks or []) if isinstance(w, dict) and w.get("name")],
+        sorted,
+    )
 
 
 def detail_autocomplete(ctx: AutocompleteContext):
@@ -246,7 +253,13 @@ def detail_autocomplete(ctx: AutocompleteContext):
     )
 
     with Session() as session:
-        details = Details.model_validate(session.scalars(stmt).one_or_none())
+        raw_details = session.scalars(stmt).one_or_none()
+
+    try:
+        # details are system-specific JSONB; only the dnd5e shape has items
+        details = Details.model_validate(raw_details)
+    except ValidationError:
+        return []
 
     return (
         search(
@@ -277,17 +290,17 @@ def detail_gm_autocomplete(ctx: AutocompleteContext):
     with Session() as session:
         details = session.scalars(stmt).one_or_none()
 
-    return (
-        search(
-            ctx.value,
-            [
-                f"{i.type.capitalize()}: {i.name}"
-                for i in Details.model_validate(details).items
-            ],
-            sorted,
-        )
-        if details
-        else []
+    if not details:
+        return []
+    try:
+        # details are system-specific JSONB; only the dnd5e shape has items
+        validated = Details.model_validate(details)
+    except ValidationError:
+        return []
+    return search(
+        ctx.value,
+        [f"{i.type.capitalize()}: {i.name}" for i in validated.items],
+        sorted,
     )
 
 
@@ -302,6 +315,9 @@ def spell_level_autocomplete(ctx: AutocompleteContext):
     )
     with Session() as session:
         res = session.scalar(stmt)
+    # spell levels are a dnd5e concept; other systems have no spellcaster attr
+    if res is None or system_id_of(res.world) != DEFAULT_SYSTEM_ID:
+        return []
     actor = Actor.model_validate(res)
     spellcaster_lvl = actor.attributes.spellcaster
     if spellcaster_lvl < 0:
@@ -344,7 +360,7 @@ def stat_autocomplete(ctx: AutocompleteContext):
         return character_not_found
 
     # noinspection PyTypeChecker
-    stmt = select(ActorTable.tools).where(
+    stmt = select(ActorTable).where(
         and_(
             ActorTable.name.icontains(ctx.options["character"]),
             ctx.interaction.user.id == any_(ActorTable.discord_ids),
@@ -353,25 +369,24 @@ def stat_autocomplete(ctx: AutocompleteContext):
     )
 
     with Session() as session:
-        res = session.scalars(stmt).one_or_none()
+        row = session.scalars(stmt).one_or_none()
 
-    if not res:
+    if row is None:
         return character_not_found
 
-    tools = TypeAdapter(Tools).validate_python(res)
-    stats = [
-        *ABILITIES.values(),
-        *SKILLS.values(),
-        *OTHER_ROLLABLES.values(),
-        *tools.known_tool_strings(),
-    ]
-    return search(ctx.value, stats, sorted)
+    system = get_system(system_id_of(row.world))
+    # preserved quirk: the legacy dnd5e path returned character_not_found for
+    # rows whose tools column was empty/falsy
+    if system.system_id == DEFAULT_SYSTEM_ID and not row.tools:
+        return character_not_found
+
+    return search(ctx.value, system.stat_options(row), sorted)
 
 
 def rule_autocomplete(ctx: AutocompleteContext):
     item_properties = {
         f"Property: {j['name']}"
-        for i in system.base_table["itemProperty"]
+        for i in dnd.base_table["itemProperty"]
         if "entries" in i
         for j in i.get("entries")
     }
@@ -383,17 +398,17 @@ def rule_autocomplete(ctx: AutocompleteContext):
     conditions = {
         f"Condition: {s['name']}"
         for s in rules.conditions["condition"]
-        if s["source"] in system.legal_sources
+        if s["source"] in dnd.legal_sources
     }
     statuses = {
         f"Status: {s['name']}"
         for s in rules.conditions["status"]
-        if s["source"] in system.legal_sources
+        if s["source"] in dnd.legal_sources
     }
     diseases = {
         f"Disease: {s['name']}"
         for s in rules.conditions["disease"]
-        if s["source"] in system.legal_sources
+        if s["source"] in dnd.legal_sources
     }
 
     movement = [
@@ -407,8 +422,7 @@ def rule_autocomplete(ctx: AutocompleteContext):
     movement = [f"Movement: {m}" for m in movement]
 
     sage_advice = [
-        f"SAC: {system.strip_template(sa)}"
-        for sa in rules.sage_advice_compendium.keys()
+        f"SAC: {dnd.strip_template(sa)}" for sa in rules.sage_advice_compendium.keys()
     ]
 
     return search(

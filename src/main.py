@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 
 import discord_client
+import fake_discord
 from database import init_db
 from routers import foundry_api, admin_api
 from routers.socket_io import sio
@@ -40,7 +41,7 @@ async def lifespan(a: FastAPI):
 
     yield
     logger.critical("SHUTTING DOWN")
-    await wikijs_task_queue.stop_worker
+    await wikijs_task_queue.stop_worker()
     await discord_client.stop()
     discord_task.cancel()
 
@@ -58,6 +59,11 @@ app.add_middleware(
 app.include_router(foundry_api.router)
 foundry_api.attach_exception_handler(app)
 app.include_router(admin_api.router)
+
+if fake_discord.enabled():
+    from routers import testing_api
+
+    app.include_router(testing_api.router)
 
 sio_asgi_app = socketio.ASGIApp(socketio_server=sio, other_asgi_app=app)
 

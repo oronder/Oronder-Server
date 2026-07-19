@@ -3,6 +3,7 @@ import os
 
 from discord import option, Intents, ApplicationContext
 
+import fake_discord
 from groups import (
     character_description,
     display_ephemeral,
@@ -32,7 +33,7 @@ from routers.socket_namespace import SocketNamespace
 from utils import oronder_bot_prod, getLogger, run_uptime_monitor
 
 logger = getLogger(__name__)
-token = os.environ["DISCORD_TOKEN"]
+token = os.environ.get("DISCORD_TOKEN", "")
 
 intents = Intents.default()
 # noinspection PyDunderSlots,PyUnresolvedReferences
@@ -51,15 +52,23 @@ bot = SocketAwareBot(intents=intents)
 async def start():
     for cog in [gm, events, downtime, game, tasks, lookups, admin, campaign]:
         cog.setup(bot)
-        await asyncio.sleep(1)
+        if not fake_discord.enabled():
+            await asyncio.sleep(1)
     logger.critical(f"Cogs Loaded: {', '.join([c.title() for c in bot.cogs])}")
+
+    if fake_discord.enabled():
+        fake_discord.install(bot)
+        fake_discord.mark_ready(bot)
+        return
 
     await bot.start(token)
 
 
 async def stop():
-    await bot.close()
-    bot.socket_namespace.stop()
+    if not fake_discord.enabled():
+        await bot.close()
+    if hasattr(bot, "socket_namespace"):
+        bot.socket_namespace.stop()
 
 
 @bot.event

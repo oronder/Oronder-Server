@@ -1,5 +1,5 @@
 import pprint
-from typing import Dict, List, Callable
+from typing import Dict, List
 
 import socketio
 from discord import Bot, ScheduledEventStatus, Guild, Embed
@@ -9,9 +9,9 @@ from sqlalchemy import select
 from database import Session, GoldLedger
 from database.guild_settings_table import GuildSettingsTable
 from database.missions import MissionTable, edit_mission
-from system.items import format_number
-from system.rules import get_lvl
+from dnd.items import format_number
 from models.guild_settings import GuildSettings
+from systems import get_system_for_actor
 from models.missions import Mission
 from routers.foundry_api import guild_auth
 from routers.socket_io import sio
@@ -98,7 +98,7 @@ class SocketNamespace(socketio.AsyncNamespace):
         self.guilds_to_missions_to_xp[guild_id][mission_id].append(payload["id_to_xp"])
 
     async def get_description(
-        self, guild_id: int, actor_id: str, item_id: str, cb: Callable
+        self, guild_id: int, actor_id: str, item_id: str, cb: callable
     ) -> bool:
         sid = next(iter(self.guilds_to_sids.get(guild_id) or []), None)
         if sid:
@@ -113,7 +113,7 @@ class SocketNamespace(socketio.AsyncNamespace):
             return False
 
     async def send_roll(
-        self, guild_id: int, payload: dict, cb: Callable = lambda **kwargs: None
+        self, guild_id: int, payload: dict, cb: callable = lambda **kwargs: None
     ) -> bool:
         sid = next(iter(self.guilds_to_sids.get(guild_id) or []), None)
         if sid:
@@ -199,16 +199,37 @@ class SocketNamespace(socketio.AsyncNamespace):
                 logger.info(f"Mission {mission.title} has no actors!")
                 return
 
+            # only actors whose game system tracks XP participate in the
+            # session XP flow; systems without XP (e.g. CoC7) skip gracefully
+            def xp_actors():
+                return [
+                    (a, system)
+                    for a in mission.get_actors()
+                    for system in [get_system_for_actor(a)]
+                    if system.supports_xp
+                ]
+
+            if not xp_actors():
+                logger.info(
+                    f"Mission {mission.title} has no XP-tracking actors; "
+                    "skipping session XP."
+                )
+                return
+
             mission.xp = xp
             guild = self.bot.get_guild(guild_id)
             actors_names_to_levels_before = {
-                a.name: get_lvl(a.get_exp(guild_settings)) for a in mission.get_actors()
+                a.name: system.get_lvl(system.get_exp(a, guild_settings))
+                for a, system in xp_actors()
             }
             await edit_mission(guild, mission)
             name_id_xp = [
-                [a.name, a.id, a.get_exp(guild_settings)] for a in mission.get_actors()
+                [a.name, a.id, system.get_lvl, system.get_exp(a, guild_settings)]
+                for a, system in xp_actors()
             ]
-            actor_names_to_levels = {name: get_lvl(xp) for [name, _, xp] in name_id_xp}
+            actor_names_to_levels = {
+                name: to_lvl(xp) for [name, _, to_lvl, xp] in name_id_xp
+            }
 
             out_str = "\n".join(
                 [
@@ -224,7 +245,9 @@ class SocketNamespace(socketio.AsyncNamespace):
             await guild.get_channel_or_thread(mission.channel_or_thread_id).send(
                 out_str
             )
-            await self.xp_sync(guild_settings, {_id: xp for [_, _id, xp] in name_id_xp})
+            await self.xp_sync(
+                guild_settings, {_id: xp for [_, _id, _, xp] in name_id_xp}
+            )
 
     async def xp_sync(
         self, guild_settings: GuildSettings, actor_id_to_xp: Dict[str, int]

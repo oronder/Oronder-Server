@@ -1,6 +1,5 @@
 import asyncio
 import time
-from asyncio import Future
 from typing import Awaitable, Any
 
 from integrations import wikijs

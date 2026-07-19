@@ -10,15 +10,14 @@ from discord import (
 )
 from discord.commands import option
 
-import system
 from database.guild_settings_table import GuildSettingsTable
 from discord_markdown_converter import md
-from system import SKILLS, TOOLS, mod_to_str, items
-from system.backgrounds import generate_background_embed
-from system.feats import generate_feat_embed, feats
-from system.items import generate_item_embed, format_number
-from system.rules import generate_rule_embed
-from system.spells import generate_spell_embed
+from dnd import SKILLS, TOOLS, mod_to_str, items
+from dnd.backgrounds import generate_background_embed
+from dnd.feats import generate_feat_embed, feats
+from dnd.items import generate_item_embed, format_number
+from dnd.rules import generate_rule_embed
+from dnd.spells import generate_spell_embed
 from groups import (
     character_description,
     display_ephemeral,
@@ -41,6 +40,7 @@ from models.actor import Item
 from models.guild_settings import Subscription
 from models.socket_aware_bot import SocketAwareBot, SocketAwareApplicationContext
 from routers.socket_namespace import SocketNamespace
+from systems import DEFAULT_SYSTEM_ID, get_system_for_actor
 from utils import respond_with_long_embed, getLogger
 from utils import tabulate
 
@@ -54,97 +54,106 @@ class Lookups(Cog):
     lookup_group = SlashCommandGroup(
         "lookup", "Lookup Game Info", contexts={InteractionContextType.guild}
     )
-    if system.ENABLED:
 
-        @lookup_group.command(name="item", description="Looks up an item.")
-        @option(
-            "item",
-            description="The item you want to look up",
-            autocomplete=lambda ctx: search(ctx.value, items.shoppable_items),
-        )
-        @option(
-            "display",
-            description=display_ephemeral,
-            default=DISPLAY_PUBLIC,
-            choices=display_choices,
-        )
-        async def item_lookup(self, ctx: ApplicationContext, item: str, display: str):
-            embed, error = generate_item_embed(item)
-            if embed:
-                await ctx.respond(embed=embed, ephemeral=display == DISPLAY_PRIVATE)
-            else:
-                await ctx.respond(**logger.err_msg(error, ctx.guild_id))
+    @lookup_group.command(name="item", description="Looks up an item.")
+    @option(
+        "item",
+        description="The item you want to look up",
+        autocomplete=lambda ctx: search(ctx.value, items.shoppable_items),
+    )
+    @option(
+        "display",
+        description=display_ephemeral,
+        default=DISPLAY_PUBLIC,
+        choices=display_choices,
+    )
+    async def item_lookup(self, ctx: ApplicationContext, item: str, display: str):
+        embed, error = generate_item_embed(item)
+        if embed:
+            await ctx.respond(embed=embed, ephemeral=display == DISPLAY_PRIVATE)
+        else:
+            await ctx.respond(**logger.err_msg(error, ctx.guild_id))
 
-        @lookup_group.command(name="feat", description="Looks up a feat.")
-        @option(
-            "feat",
-            description="The feat you want to look up",
-            autocomplete=lambda ctx: search(ctx.value, feats.keys()),
+    @lookup_group.command(name="feat", description="Looks up a feat.")
+    @option(
+        "feat",
+        description="The feat you want to look up",
+        autocomplete=lambda ctx: search(ctx.value, feats.keys()),
+    )
+    @option(
+        "display",
+        description=display_ephemeral,
+        default=DISPLAY_PUBLIC,
+        choices=display_choices,
+    )
+    async def feat_lookup(self, ctx: ApplicationContext, feat: str, display: str):
+        await ctx.respond(
+            embed=generate_feat_embed(feat), ephemeral=display == DISPLAY_PRIVATE
         )
-        @option(
-            "display",
-            description=display_ephemeral,
-            default=DISPLAY_PUBLIC,
-            choices=display_choices,
-        )
-        async def feat_lookup(self, ctx: ApplicationContext, feat: str, display: str):
-            await ctx.respond(
-                embed=generate_feat_embed(feat), ephemeral=display == DISPLAY_PRIVATE
-            )
 
-        @lookup_group.command(name="rule", description="Looks up a rule.")
-        @option(
-            "rule",
-            description="The rule you want to look up",
-            autocomplete=rule_autocomplete,
+    @lookup_group.command(name="rule", description="Looks up a rule.")
+    @option(
+        "rule",
+        description="The rule you want to look up",
+        autocomplete=rule_autocomplete,
+    )
+    @option(
+        "display",
+        description=display_ephemeral,
+        default=DISPLAY_PUBLIC,
+        choices=display_choices,
+    )
+    async def rule_lookup(self, ctx: ApplicationContext, rule: str, display: str):
+        await ctx.respond(
+            **generate_rule_embed(rule), ephemeral=display == DISPLAY_PRIVATE
         )
-        @option(
-            "display",
-            description=display_ephemeral,
-            default=DISPLAY_PUBLIC,
-            choices=display_choices,
-        )
-        async def rule_lookup(self, ctx: ApplicationContext, rule: str, display: str):
-            await ctx.respond(
-                **generate_rule_embed(rule), ephemeral=display == DISPLAY_PRIVATE
-            )
 
-        @lookup_group.command(name="background", description="Looks up a background.")
-        @option(
-            "background",
-            description="The background you want to look up",
-            autocomplete=background_autocomplete,
-        )
-        @option(
-            "display",
-            description=display_ephemeral,
-            default=DISPLAY_PUBLIC,
-            choices=display_choices,
-        )
-        async def background_lookup(
-            self, ctx: ApplicationContext, background: str, display: str
-        ):
-            await ctx.respond(
-                embed=generate_background_embed(background),
-                ephemeral=display == DISPLAY_PRIVATE,
-            )
+    # TODO /lookup racefeat
+    # TODO /lookup race
+    # TODO /lookup classfeat
+    # TODO /lookup class
+    # TODO /lookup subclass
 
-        @lookup_group.command(name="spell", description="Looks up a spell.")
-        @option(
-            "spell",
-            description="The spell you want to look up",
-            autocomplete=spell_autocomplete,
+    # TODO /lookup monster
+    # TODO /lookup monimage
+    # TODO /lookup token
+
+    @lookup_group.command(name="background", description="Looks up a background.")
+    @option(
+        "background",
+        description="The background you want to look up",
+        autocomplete=background_autocomplete,
+    )
+    @option(
+        "display",
+        description=display_ephemeral,
+        default=DISPLAY_PUBLIC,
+        choices=display_choices,
+    )
+    async def background_lookup(
+        self, ctx: ApplicationContext, background: str, display: str
+    ):
+        await ctx.respond(
+            embed=generate_background_embed(background),
+            ephemeral=display == DISPLAY_PRIVATE,
         )
-        @option(
-            "display",
-            description=display_ephemeral,
-            default=DISPLAY_PUBLIC,
-            choices=display_choices,
+
+    @lookup_group.command(name="spell", description="Looks up a spell.")
+    @option(
+        "spell",
+        description="The spell you want to look up",
+        autocomplete=spell_autocomplete,
+    )
+    @option(
+        "display",
+        description=display_ephemeral,
+        default=DISPLAY_PUBLIC,
+        choices=display_choices,
+    )
+    async def spell_lookup(self, ctx: ApplicationContext, spell: str, display: str):
+        await ctx.respond(
+            embed=generate_spell_embed(spell), ephemeral=display == DISPLAY_PRIVATE
         )
-        async def spell_lookup(self, ctx: ApplicationContext, spell: str, display: str):
-            await ctx.respond(
-                embed=generate_spell_embed(spell), ephemeral=display == DISPLAY_PRIVATE
-            )
 
     @lookup_group.command(name="character", description="Look up Character details.")
     @option(
@@ -191,6 +200,16 @@ async def lookup_character(
     actor, error = get_actor(character, ctx.user.id, ctx.guild_id, gm)
     if error:
         await ctx.respond(**error)
+        return
+
+    system = get_system_for_actor(actor)
+    if system.system_id != DEFAULT_SYSTEM_ID:
+        # non-dnd5e systems get a simple text summary instead of the full
+        # 5e sheet renderer
+        embed = Embed(title=actor.name, description=system.summary_text(actor))
+        if actor.portrait_url:
+            embed.set_thumbnail(url=actor.portrait_url)
+        await respond_with_long_embed(ctx, embed, ephemeral=display == DISPLAY_PRIVATE)
         return
 
     embed = Embed(

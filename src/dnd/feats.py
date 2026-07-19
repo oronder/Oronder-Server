@@ -1,11 +1,11 @@
 from discord import Embed
 
-import system
+import dnd
 from utils import getLogger, capitalize_title, join_list
 
 logger = getLogger(__name__)
 
-feats = {feat['name']: feat for feat in system.load_json('feats')['feat'] if feat['source'] in system.legal_sources}
+feats = {feat['name']: feat for feat in dnd.load_json('feats')['feat'] if feat['source'] in dnd.legal_sources}
 
 
 def generate_feat_embed(feat_name):
@@ -22,11 +22,11 @@ def generate_feat_embed(feat_name):
                 else:
                     if not ability['choose']['amount'] == 1:
                         logger.warning("this is new! Not expecting a feat that grants > 1 ability!")
-                    stats = [system.ABILITIES[k] for k in feat['ability'][0]['choose']['from']]
+                    stats = [dnd.ABILITIES[k] for k in feat['ability'][0]['choose']['from']]
             else:
                 if not all(v == 1 for v in ability.values()):
                     logger.warning("this is new! Not expecting a feat that grants > 1 ability!")
-                stats = [system.ABILITIES[k] for k in ability.keys()]
+                stats = [dnd.ABILITIES[k] for k in ability.keys()]
 
             if stats:
                 ability_strs.append(
@@ -56,7 +56,7 @@ def generate_feat_embed(feat_name):
             elif k == 'ability':
                 prereq_strs.append(
                     join_list([
-                        f"{system.ABILITIES[a_k]}" for ability in v for (a_k, a_v) in ability.items()
+                        f"{dnd.ABILITIES[a_k]}" for ability in v for (a_k, a_v) in ability.items()
                     ], ", ", " or ") + ' ' + str(list(v[0].values())[0]) + ' or higher'
                 )
         embed.add_field(
@@ -66,7 +66,7 @@ def generate_feat_embed(feat_name):
 
     entries = [feat['entries'][0], {'type': 'list', 'items': ability_strs}, *feat['entries'][1:]]
 
-    for (n, v, i) in system.handle_description_entries(feat, entries):
+    for (n, v, i) in dnd.handle_description_entries(feat, entries):
         embed.add_field(name=n, value=v, inline=i)
     embed.set_footer(text=f"Feat | {feat['source']}  {feat['page']}")
     return embed

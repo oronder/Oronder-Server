@@ -2,13 +2,13 @@ import re
 
 from discord import Embed
 
-import system
+import dnd
 from utils import capitalize_title, join_list
 
 backgrounds = {
     bg["name"]: bg
-    for bg in system.load_json("backgrounds")["background"]
-    if bg["source"] in system.legal_sources
+    for bg in dnd.load_json("backgrounds")["background"]
+    if bg["source"] in dnd.legal_sources
 }
 
 

@@ -1,6 +1,5 @@
 import textwrap
 from datetime import datetime, timedelta, date
-from textwrap import dedent
 
 import pytz
 from discord import (
@@ -22,14 +21,15 @@ from sqlalchemy import select, func, any_, text, and_
 from sqlalchemy.exc import NoResultFound
 from tabulate import tabulate
 
-import system
+import dnd
 from database import Session, CampaignTable, XpAdjustmentsTable
 from database.actor_table import ActorTable
 from database.game_master_table import GameMasterTable
 from database.guild_settings_table import GuildSettingsTable
 from database.missions import MissionTable, edit_mission, upsert_mission
-from system.items import format_number
-from system.rules import get_lvl, lvl_to_xp
+from dnd.items import format_number
+from dnd.rules import lvl_to_xp
+from systems import get_system_for_actor
 from groups import (
     character_description,
     get_mission_for_edit,
@@ -529,16 +529,29 @@ class GM(Cog):
 
         await ctx.respond(f"{out_str or 'Nothing'} rewarded for **{game}**!")
 
+        # actors whose game system does not track XP (e.g. CoC7) are skipped
+        def xp_actors():
+            return [
+                (a, system)
+                for a in mission.get_actors()
+                for system in [get_system_for_actor(a)]
+                if system.supports_xp
+            ]
+
         actors_names_to_levels_before = {
-            a.name: get_lvl(a.get_exp(guild_settings)) for a in mission.get_actors()
+            a.name: system.get_lvl(system.get_exp(a, guild_settings))
+            for a, system in xp_actors()
         }
         await edit_mission(ctx.guild, mission)
 
         if xp:
             name_id_xp = [
-                [a.name, a.id, a.get_exp(guild_settings)] for a in mission.get_actors()
+                [a.name, a.id, system.get_lvl, system.get_exp(a, guild_settings)]
+                for a, system in xp_actors()
             ]
-            actor_names_to_levels = {name: get_lvl(xp) for [name, _, xp] in name_id_xp}
+            actor_names_to_levels = {
+                name: to_lvl(xp) for [name, _, to_lvl, xp] in name_id_xp
+            }
 
             out_str = "\n".join(
                 [
@@ -552,7 +565,7 @@ class GM(Cog):
                 await ctx.respond(out_str)
 
             await self.bot.socket_namespace.xp_sync(
-                guild_settings, {_id: xp for [_, _id, xp] in name_id_xp}
+                guild_settings, {_id: xp for [_, _id, _, xp] in name_id_xp}
             )
 
             logger.debug(f"reward for:\n{mission}")
@@ -1048,7 +1061,7 @@ class GM(Cog):
         with Session() as session:
             stmt = text(
                 textwrap.dedent(f"""
-                SELECT distinct on (actors.id) actors.name, actors.skills -> '{system.abreviate_stat_name(skill)}' ->> 'passive' as passive
+                SELECT distinct on (actors.id) actors.name, actors.skills -> '{dnd.abreviate_stat_name(skill)}' ->> 'passive' as passive
                 FROM missions
                 JOIN LATERAL unnest(missions.pcs::text[]) AS actor_id ON true
                 JOIN actors ON actor_id = actors.id

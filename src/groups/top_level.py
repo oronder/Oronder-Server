@@ -6,21 +6,12 @@ from d20 import RollError
 from discord import Embed, EmbedFooter, EmbedField
 
 from database.guild_settings_table import GuildSettingsTable
-from system import (
-    handle_description_entries,
-    cleanse_damage_roll,
-    STAT_NAME_TO_ABRV,
-    SKILLS,
-    TOOLS,
-    ABILITIES,
-    OTHER_ROLLABLES_NAME_TO_ABRV,
-)
-from system.items import attack_modes
-from system.rules import actions
+from dnd import handle_description_entries
+from dnd.rules import actions
 from groups import get_actor, DISPLAY_PRIVATE, invite_link
-from models.actor import Spell
 from models.guild_settings import Subscription
 from routers.socket_namespace import SocketNamespace
+from systems import get_system_for_actor
 from utils import getLogger, join_list, respond_with_long_embed, capitalize_title
 
 logger = getLogger(__name__)
@@ -39,40 +30,23 @@ async def roll(
         await ctx.respond(**error)
         return
 
-    stat_type, stat_descriptor = (
-        ("save", f"{stat} Saving Throw")
-        if save
-        else ("ability", f"{stat} Ability Check")
-        if stat in ABILITIES.values()
-        else ("tool", f"{stat} Tool Check")
-        if stat in TOOLS.values()
-        else ("skill", f"{stat} Skill Check")
-        if stat in SKILLS.values()
-        else ("init", f"{character} rolls for Initiative!")
-        if stat == "Initiative"
-        else (OTHER_ROLLABLES_NAME_TO_ABRV.get(stat, None), stat)
-    )
+    system = get_system_for_actor(actor)
+    roll_spec = system.build_roll(actor, character, stat, advantage, save)
 
-    if not stat_type:
+    if not roll_spec:
         await ctx.respond(
             **logger.err_msg(f"Unrecognized stat **{stat}**.", ctx.guild_id)
         )
         return
 
-    if advantage:
-        stat_descriptor += f" ({advantage})"
-
     async def send_roll(res: str | None = None, ephemeral: bool = False):
         if not res:
-            _, res = actor.roll_str(
-                stat, advantage=advantage and advantage.lower()[:3], is_save=save
-            )
-            res = str(res)
+            res = roll_spec.local_roll()
 
         await ctx.respond(
             embed=Embed(
                 # description=advantage and f'[{advantage}]',
-                fields=[EmbedField(stat_descriptor, res)],
+                fields=[EmbedField(roll_spec.descriptor, res)],
                 footer=EmbedFooter(actor.name, actor.portrait_url),
             ),
             ephemeral=ephemeral,
@@ -90,10 +64,8 @@ async def roll(
         success = await socket_namespace.send_roll(
             ctx.guild_id,
             {
-                "type": stat_type,
+                **roll_spec.payload,
                 "actor_id": actor.id,
-                "stat": STAT_NAME_TO_ABRV[stat],
-                "advantage": advantage,
                 "discord_id": str(ctx.user.id),
             },
             send_roll,
@@ -119,6 +91,8 @@ async def roll_attack(
         await ctx.respond(**error)
         return
 
+    system = get_system_for_actor(actor)
+
     attack = next((a for a in actor.weapons if a.name == attack_name), None)
     if not attack:
         await ctx.respond(
@@ -126,16 +100,17 @@ async def roll_attack(
         )
         return
 
-    async def send_atk(atk: str | None = None, dmg: str | List | None = None):
+    async def send_atk(
+        atk: str | None = None,
+        dmg: str | List | None = None,
+        res: str | None = None,
+        ephemeral: bool = False,  # noqa: ARG001 - part of the ack contract
+    ):
+        # dnd5e acks with {atk, dmg}; pf2e/CoC7 ack with {res} (SYSTEMS.md).
+        if not atk and res:
+            atk = res
         if not atk:
-            match advantage:
-                case "Disadvantage":
-                    attack.attack.replace("1d20", "2d20kl1", 1)
-                case "Advantage":
-                    attack.attack.replace(
-                        "1d20", "3d20kh1" if actor.elven_accuracy() else "2d20kh1", 1
-                    )
-            atk = d20.roll(cleanse_damage_roll(attack.attack)).result
+            atk = system.attack_fallback(actor, attack, advantage)
 
         embed = Embed(
             title=attack.name,
@@ -167,17 +142,10 @@ async def roll_attack(
             pass
 
         payload = {
-            "type": "attack",
             "actor_id": actor.id,
             "discord_id": str(ctx.user.id),
-            "item_id": attack.id,
+            **system.attack_payload(actor, attack, advantage, spell_level, attack_mode),
         }
-        if isinstance(attack, Spell) and spell_level is not None:
-            payload["spell_level"] = spell_level
-        if advantage:
-            payload["advantage"] = advantage
-        if attack_mode and attack_mode in attack_modes:
-            payload["attack_mode"] = attack_modes[attack_mode]
 
         success = await socket_namespace.send_roll(ctx.guild_id, payload, send_atk)
     else:

@@ -1,6 +1,6 @@
 [project]
 name = "oronder"
-version = "1.0.0"
+version = "0.0.1"
 description = "Discord + FastAPI service for Oronder/Foundry integrations"
 authors = [
     { name = "Tuna", email = "chris@oeleri.ch" }
@@ -10,33 +10,49 @@ readme = "README.md"
 license = { text = "MIT" }
 
 dependencies = [
-    "aiohttp==3.12.15",
+    "aiohttp==3.13.5",
     "brotlipy==0.7.0",
     "d20==1.1.2",
     "dateparser==1.2.2",
-    "fastapi==0.120.0",
+    "fastapi==0.121.0",
     "httpx==0.28.1",
     "Jinja2==3.1.6",
     "markdownify==1.2.0",
     "msgspec==0.19.0",
     "numpy==2.3.3",
-    "Pillow==11.3.0",
-    "psutil==7.1.0",
-    "psycopg2-binary==2.9.10",
+    "Pillow==12.2.0",
+    "pip==26.1",
+    "psutil==7.1.3",
+    "psycopg2-binary==2.9.11",
     "py-cord @ git+https://github.com/Pycord-Development/pycord",
-    "pydantic==2.11.9",
-    "python-socketio==5.14.2",
+    "pydantic==2.12.4",
+    "python-socketio==5.16.1",
     "pytz==2025.2",
     "pytzdata==2020.1",
-    "setuptools==80.9.0",
-    "SQLAlchemy==2.0.43",
+    "setuptools==82.0.1",
+    "SQLAlchemy==2.0.49",
+    #  "sqlmodel==0.0.24",
     "tabulate==0.9.0",
     "uvicorn==0.38.0",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+markers = [
+    "foundry: end-to-end tests that drive a real Foundry VTT instance (needs FOUNDRY_APP_DIR)",
+]
+
 [dependency-groups]
 dev = [
-    "ruff==0.14.2",
-    "mypy==1.18.2",
-    "types-tabulate==0.10.0.20260508"
+    "ruff==0.14.4",
+    "mypy==1.20.0",
+    "types-tabulate==0.10.0.20260508",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "playwright>=1.61.0",
+    "httpx>=0.28.1",
 ]

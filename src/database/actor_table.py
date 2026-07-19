@@ -6,7 +6,7 @@ from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
-from models.actor import Actor
+from models.base_model import OronderBaseModel
 
 
 class ActorTable(Base):
@@ -38,5 +38,8 @@ class ActorTable(Base):
     )
 
     @staticmethod
-    def from_model(actor_model: Actor, guild_id: int) -> "ActorTable":
+    def from_model(actor_model: OronderBaseModel, guild_id: int) -> "ActorTable":
+        """Accepts any system's actor model; to_dict() keys must be a subset
+        of this table's columns (per-system payloads nest inside the shared
+        JSONB columns, see SYSTEMS.md)."""
         return ActorTable(**actor_model.to_dict(), guild_id=guild_id)

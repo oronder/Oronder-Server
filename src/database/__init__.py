@@ -33,7 +33,21 @@ class Base(DeclarativeBase, MappedAsDataclass):
     pass
 
 
-database_url = f"postgresql://postgres:{os.environ['POSTGRES_PASSWORD']}@{os.getenv('POSTGRES_HOSTNAME', 'oronder-db')}:5432/postgres"
+def _database_url() -> str:
+    """DATABASE_URL wins; otherwise compose one from POSTGRES_* parts with
+    localhost defaults so a stock `postgres` install works out of the box."""
+    if os.environ.get("DATABASE_URL"):
+        return os.environ["DATABASE_URL"]
+    user = os.environ.get("POSTGRES_USER", "postgres")
+    password = os.environ.get("POSTGRES_PASSWORD", "")
+    host = os.environ.get("POSTGRES_HOSTNAME", "127.0.0.1")
+    port = os.environ.get("POSTGRES_PORT", "5432")
+    db = os.environ.get("POSTGRES_DB", "oronder")
+    credentials = f"{user}:{password}" if password else user
+    return f"postgresql://{credentials}@{host}:{port}/{db}"
+
+
+database_url = _database_url()
 engine = create_engine(database_url)
 Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

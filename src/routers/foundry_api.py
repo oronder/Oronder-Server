@@ -9,6 +9,7 @@ import aiohttp
 from discord import Bot
 from fastapi import Depends, HTTPException, APIRouter, Query, Header, status, FastAPI
 from fastapi.responses import HTMLResponse
+from pydantic import ValidationError
 from sqlalchemy.exc import NoResultFound
 
 import discord_client
@@ -17,6 +18,7 @@ from database.actor_table import ActorTable
 from database.guild_settings_table import GuildSettingsTable
 from integrations.wikijs import upload_to_wiki, delete_from_wiki
 from models.actor import Actor
+from systems import DEFAULT_SYSTEM_ID, get_system, system_id_of
 from models.guild_settings import (
     GuildSettings,
     GuildSettingsInterface,
@@ -35,8 +37,8 @@ from utils.WikiJsTaskQueue import wikijs_task_queue
 logger = getLogger(__name__)
 router = APIRouter()
 
-DISCORD_CLIENT_SECRET = os.environ["DISCORD_CLIENT_SECRET"]
-REDIRECT_URI = f"{os.environ['API_URL']}/init"
+DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET", "")
+REDIRECT_URI = f"{os.environ.get('API_URL', 'http://localhost:65435')}/init"
 
 
 def session_handler():
@@ -101,7 +103,12 @@ async def heart_beat():
 
 @router.post("/update_discord")
 async def update_foundry_module(js: dict, authorization: str = Header()):
-    key = "CiHI3kGl1eMJBY4pvAxcHSAai5jdPhkaIPDlOeHuxg9GUpaSROTcTAehTb8vMH8xZVrX97tmy508WQd2fJa98CRC2P4qs"
+    key = os.environ.get("UPDATE_DISCORD_KEY", "")
+    if not key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="UPDATE_DISCORD_KEY is not configured",
+        )
     if not secrets.compare_digest(authorization, key):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
     logger.critical(f"POSTING ADDON UPDATE MSG {js=}")
@@ -120,14 +127,25 @@ async def update_foundry_module(js: dict, authorization: str = Header()):
 
 @router.put("/actor")
 async def upsert_actor(
-    actor: Actor, guild_settings=Depends(guild_auth), session=Depends(session_handler)
+    actor: dict, guild_settings=Depends(guild_auth), session=Depends(session_handler)
 ):
-    actor_orm = ActorTable.from_model(actor, guild_settings.id)
+    system = get_system(system_id_of(actor.get("world")))
+    try:
+        actor_model = system.parse_actor(actor)
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        )
+    actor_orm = ActorTable.from_model(actor_model, guild_settings.id)
     session.merge(actor_orm)
     session.commit()
-    if guild_settings.id in [oronder_dnd_server_id]:
-        logger.warning(f"Upserting {actor.name} to wiki!")
-        wikijs_task_queue.add_task(upload_to_wiki, actor)
+    # wiki.js character sheets are dnd5e-only
+    if (
+        guild_settings.id in [oronder_dnd_server_id]
+        and system.system_id == DEFAULT_SYSTEM_ID
+    ):
+        logger.warning(f"Upserting {actor_model.name} to wiki!")
+        wikijs_task_queue.add_task(upload_to_wiki, actor_model)
 
 
 @router.delete("/actor/{actor_id}")
@@ -141,7 +159,10 @@ async def delete_actor(
             .one()
         )
 
-        if guild_settings.id in [oronder_dnd_server_id]:
+        if (
+            guild_settings.id in [oronder_dnd_server_id]
+            and system_id_of(actor.world) == DEFAULT_SYSTEM_ID
+        ):
             logger.warning(f"Deleting {actor.name} from wiki!")
             wikijs_task_queue.add_task(delete_from_wiki, Actor.model_validate(actor))
 
@@ -153,13 +174,19 @@ async def delete_actor(
         )
 
 
-@router.get("/init", response_class=HTMLResponse)
-async def init(
-    code: Annotated[str, Query()],
-    guild_id: Annotated[int, Query()],
-    state: Annotated[str, Query()],
-    bot: Bot = Depends(get_bot),
-):
+async def exchange_oauth_code(code: str, guild_id: int, bot: Bot) -> dict:
+    """Exchange the Discord OAuth2 authorization code for a token response.
+
+    In fake-Discord mode there is no Discord app to talk to, so the
+    exchange is short-circuited: any code is accepted and the requested
+    guild is echoed back. This lets the whole Foundry onboarding flow
+    (popup -> /init -> postMessage -> auth token saved) run headlessly.
+    """
+    import fake_discord
+
+    if fake_discord.enabled():
+        return {"guild": {"id": str(guild_id)}}
+
     async with aiohttp.ClientSession() as http_session:
         async with http_session.post(
             disord_token_url,
@@ -189,6 +216,18 @@ async def init(
                     f"{guild_id=}\n{response.status=}\n{detail=}\n{REDIRECT_URI=}\ntoken_response={pformat(token_response)}\n"
                 )
                 raise InitException(status_code=response.status, detail=detail)
+
+    return token_response
+
+
+@router.get("/init", response_class=HTMLResponse)
+async def init(
+    code: Annotated[str, Query()],
+    guild_id: Annotated[int, Query()],
+    state: Annotated[str, Query()],
+    bot: Bot = Depends(get_bot),
+):
+    token_response = await exchange_oauth_code(code, guild_id, bot)
 
     if guild_id != int(token_response["guild"]["id"]):
         raise InitException(status_code=status.HTTP_401_UNAUTHORIZED)

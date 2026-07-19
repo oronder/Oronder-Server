@@ -131,7 +131,7 @@ async def edit_mission(
 
 
 def upsert_mission(
-    guild: Guild, mission: Mission, add_event_fun: Callable
+    guild: Guild, mission: Mission, add_event_fun: callable
 ) -> list[str]:
     """
     You probably want to use edit_mission unless you're creating a new mission,

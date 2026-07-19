@@ -7,8 +7,8 @@ import d20
 import httpx
 from discord import Embed
 
-import system
-from system.spells import spells_by_level, spells_by_name, spell_names, st_nd_rd_th
+import dnd
+from dnd.spells import spells_by_level, spells_by_name, spell_names, st_nd_rd_th
 from utils import capitalize_title, getLogger, join_list
 
 logger = getLogger(__name__)
@@ -28,7 +28,7 @@ attack_modes_human: list[str] = list(attack_modes.keys())
 attack_modes_machine: list[str] = list(attack_modes.values())
 
 loot_table, variant_table, item_table = [
-    system.load_json(f) for f in ["loot", "magicvariants", "items"]
+    dnd.load_json(f) for f in ["loot", "magicvariants", "items"]
 ]
 
 
@@ -40,8 +40,8 @@ def get_item_name(generic: dict, variant: dict) -> str:
 
 generics = [
     g
-    for g in system.base_table["baseitem"]
-    if g["source"] in system.legal_sources and g.get("age") not in system.illegal_ages
+    for g in dnd.base_table["baseitem"]
+    if g["source"] in dnd.legal_sources and g.get("age") not in dnd.illegal_ages
 ]
 
 variants_dict = {
@@ -52,7 +52,7 @@ variants_dict = {
     }
     for g in generics
     for v in variant_table["magicvariant"]
-    if v["inherits"]["source"] in system.legal_sources
+    if v["inherits"]["source"] in dnd.legal_sources
     and any(
         all(g.get(k) == v for (k, v) in requirement.items())
         for requirement in v["requires"]
@@ -63,9 +63,9 @@ variants_dict = {
 magic_items = [
     (i["name"], i.get("rarity", "unknown"))
     for i in item_table["item"]
-    if i["source"] in system.legal_sources
+    if i["source"] in dnd.legal_sources
     and "$" not in i.get("type", [])
-    and i.get("age") not in system.illegal_ages
+    and i.get("age") not in dnd.illegal_ages
     and i["name"] not in variants_dict.keys()
 ]
 
@@ -144,7 +144,7 @@ def get_official_price(item_name, is_consumable=False):
     base_price = next(
         (
             i["value"]
-            for i in system.base_table["baseitem"] + item_table["item"]
+            for i in dnd.base_table["baseitem"] + item_table["item"]
             if i["name"] == item_name and "value" in i
         ),
         None,
@@ -171,7 +171,7 @@ def get_official_price(item_name, is_consumable=False):
                 base_cost = int(
                     next(
                         i["value"]
-                        for i in system.base_table["baseitem"]
+                        for i in dnd.base_table["baseitem"]
                         if i["name"] == variant["generic"]
                     )
                     / 100
@@ -260,7 +260,7 @@ def five_e_magic_shop_lookup(item_name: str):
 def process_roll_table_item(i: dict) -> str:
     """
 
-    :param i: item from `system.item_table`
+    :param i: item from `dnd.item_table`
     :return: item name
     """
     item_name = "item not found"
@@ -279,7 +279,7 @@ def process_roll_table_item(i: dict) -> str:
             if variant:
                 results = [
                     base_item
-                    for base_item in system.base_table["baseitem"]
+                    for base_item in dnd.base_table["baseitem"]
                     if all(
                         base_item.get(k) != v
                         for (k, v) in variant.get("excludes", {}).items()
@@ -324,7 +324,7 @@ def process_roll_table_item(i: dict) -> str:
     else:
         logger.error(f"{i=}")
 
-    return capitalize_title(system.strip_template(item_name))
+    return capitalize_title(dnd.strip_template(item_name))
 
 
 def variant_lookup(variants, potential_base_items, condition):
@@ -385,7 +385,7 @@ def get_item(item_name: str):
         or next(
             (
                 i
-                for i in system.base_table["baseitem"]
+                for i in dnd.base_table["baseitem"]
                 if i["name"].lower() == item_name.lower()
             ),
             None,
@@ -412,7 +412,7 @@ def get_item(item_name: str):
     elif not item:
         base_items = [
             i
-            for i in system.base_table["baseitem"]
+            for i in dnd.base_table["baseitem"]
             if i["name"].lower() in item_name.lower()
         ]
         prefs = variant_lookup(
@@ -512,13 +512,13 @@ def get_item(item_name: str):
         elif "armor" in category_reqs or not {"HA", "MA"}.isdisjoint(type_reqs):
             item_type = "Armor"
         else:
-            item_type = system.ITEM_TYPE_JSON_TO_ABV[item.get("type")]
+            item_type = dnd.ITEM_TYPE_JSON_TO_ABV[item.get("type")]
 
         item: dict = item["inherits"]
 
         good = (
             category_reqs
-            + [system.ITEM_TYPE_JSON_TO_ABV[t] for t in type_reqs]
+            + [dnd.ITEM_TYPE_JSON_TO_ABV[t] for t in type_reqs]
             + name_reqs
         )
         bad = category_excl + name_excl
@@ -552,9 +552,7 @@ def get_item(item_name: str):
             join_list(
                 [
                     item.get("weaponCategory"),
-                    system.ITEM_TYPE_JSON_TO_ABV.get(item.get("type"), "").split(" ")[
-                        0
-                    ],
+                    dnd.ITEM_TYPE_JSON_TO_ABV.get(item.get("type"), "").split(" ")[0],
                 ],
                 ", ",
             )
@@ -567,7 +565,7 @@ def get_item(item_name: str):
         item["type_string"] = "Wonderous Item"
     elif "type_string" not in item:
         item["type_string"] = capitalize_title(
-            system.ITEM_TYPE_JSON_TO_ABV.get(item.get("type"), "???")
+            dnd.ITEM_TYPE_JSON_TO_ABV.get(item.get("type"), "???")
         )
 
     item["rarity"] = (
@@ -635,7 +633,7 @@ def generate_item_embed(item_name):
             f"({join_list([item.get('dmg2'), item.get('bonusWeapon')], '')})"
             if "dmg2" in item
             else None,
-            system.DMGTYPE_JSON_TO_FULL.get(item.get("dmgType")),
+            dnd.DMGTYPE_JSON_TO_FULL.get(item.get("dmgType")),
         ],
         " ",
     )
@@ -651,14 +649,14 @@ def generate_item_embed(item_name):
                     "Requires Attunement",
                     None
                     if item["reqAttune"] is True
-                    else system.capitalize_title(item["reqAttune"]),
+                    else dnd.capitalize_title(item["reqAttune"]),
                 ],
                 " ",
             ),
         )
 
     if item.get("entries"):
-        for n, v, i in system.handle_description_entries(item, item["entries"]):
+        for n, v, i in dnd.handle_description_entries(item, item["entries"]):
             embed.add_field(name=n, value=v, inline=i)
 
     if "entries" not in item and item["type_string"].startswith("Weapon"):

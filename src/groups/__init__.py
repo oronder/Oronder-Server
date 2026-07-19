@@ -8,8 +8,8 @@ from database import Session
 from database.actor_table import ActorTable
 from database.guild_settings_table import GuildSettingsTable
 from database.missions import MissionTable
-from models.actor import Actor
 from models.missions import Mission
+from systems import BaseSystemActor, validate_actor_row
 from utils import oronder_server_id, chris_discord_id, getLogger
 
 logger = getLogger(__name__)
@@ -37,7 +37,9 @@ def invite_link(ctx: ApplicationContext):
         return "https://discord.gg/Adg48Xrs6K"
 
 
-def get_actors(discord_id: int, guild_id: int) -> Tuple[List[Actor], Optional[dict]]:
+def get_actors(
+    discord_id: int, guild_id: int
+) -> Tuple[List[BaseSystemActor], Optional[dict]]:
     stmt = (
         select(ActorTable)
         .where(discord_id == any_(ActorTable.discord_ids))
@@ -47,7 +49,7 @@ def get_actors(discord_id: int, guild_id: int) -> Tuple[List[Actor], Optional[di
     try:
         with Session() as session:
             return [
-                Actor.model_validate(actor) for actor in session.scalars(stmt).all()
+                validate_actor_row(actor) for actor in session.scalars(stmt).all()
             ], None
 
     except NoResultFound:
@@ -60,7 +62,7 @@ def get_actors(discord_id: int, guild_id: int) -> Tuple[List[Actor], Optional[di
 
 def get_actor(
     character: str, discord_id: int, guild_id: int, gm: bool = False
-) -> Tuple[Actor, dict]:
+) -> Tuple[BaseSystemActor, dict]:
     stmt = (
         select(ActorTable)
         .where(ActorTable.name == character)
@@ -72,7 +74,7 @@ def get_actor(
 
     try:
         with Session() as session:
-            return Actor.model_validate(session.scalars(stmt).one()), None
+            return validate_actor_row(session.scalars(stmt).one()), None
 
     except NoResultFound:
         return None, logger.err_msg(f"Character {character} not found!", guild_id)

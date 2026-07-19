@@ -9,9 +9,9 @@ from pydantic import Field, AliasChoices, BeforeValidator, field_validator
 from sqlalchemy import text, any_, func, select, TextClause
 
 from database import Session, CampaignTable, XpAdjustmentsTable
-from system import STAT_NAME_TO_ABRV, STAT_ABRV_TO_NAME, TOOLS
-from system.items import attack_modes_machine, calculate_average_damage
-from system.rules import lvl_to_xp
+from dnd import STAT_NAME_TO_ABRV, STAT_ABRV_TO_NAME, TOOLS
+from dnd.items import attack_modes_machine, calculate_average_damage
+from dnd.rules import lvl_to_xp
 from models.base_model import OronderBaseModel
 from models.guild_settings import GuildSettings
 from utils import getLogger
@@ -1242,34 +1242,45 @@ class Actor(OronderBaseModel):
         )
 
     def get_exp(self, guild_settings: GuildSettings) -> int:
-        with Session() as session:
-            earned = session.scalar(_mission_xp_query(self.id, guild_settings.id)) or 0
+        earned, starting_lvl = earned_xp_and_starting_level(self.id, guild_settings)
+        return lvl_to_xp[starting_lvl] + earned
 
-            adjustments = (
-                session.scalar(
-                    select(func.sum(XpAdjustmentsTable.xp)).where(
-                        (XpAdjustmentsTable.guild_id == guild_settings.id)
-                        & (XpAdjustmentsTable.actor_id == self.id)
-                    )
+
+def earned_xp_and_starting_level(
+    actor_id: str, guild_settings: GuildSettings
+) -> Tuple[int, int]:
+    """Earned XP (missions + adjustments) and starting level for an actor.
+
+    System-agnostic: each system converts starting level to starting XP with
+    its own table.
+    """
+    with Session() as session:
+        earned = session.scalar(_mission_xp_query(actor_id, guild_settings.id)) or 0
+
+        adjustments = (
+            session.scalar(
+                select(func.sum(XpAdjustmentsTable.xp)).where(
+                    (XpAdjustmentsTable.guild_id == guild_settings.id)
+                    & (XpAdjustmentsTable.actor_id == actor_id)
                 )
-                or 0
             )
+            or 0
+        )
 
-            campaigns = session.scalars(
-                select(CampaignTable).filter(
-                    (CampaignTable.guild_id == guild_settings.id) &
-                    (any_(CampaignTable.actor_ids) == self.id)
-                )
-            ).all()
+        campaigns = session.scalars(
+            select(CampaignTable).filter(
+                (CampaignTable.guild_id == guild_settings.id) &
+                (any_(CampaignTable.actor_ids) == actor_id)
+            )
+        ).all()
 
-            if campaigns:
-                first_campaign_group: CampaignTable = min(campaigns, key=lambda campaign: snowflake_time(campaign.id))
-                starting_lvl = first_campaign_group.starting_level
-            else:
-                starting_lvl = guild_settings.starting_level
+        if campaigns:
+            first_campaign_group: CampaignTable = min(campaigns, key=lambda campaign: snowflake_time(campaign.id))
+            starting_lvl = first_campaign_group.starting_level
+        else:
+            starting_lvl = guild_settings.starting_level
 
-        out = lvl_to_xp[starting_lvl] + earned + adjustments
-        return out
+    return earned + adjustments, starting_lvl
 
 
 def _mission_xp_query(pc_id: str, guild_id: int) -> TextClause:

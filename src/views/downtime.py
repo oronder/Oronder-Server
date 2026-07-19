@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Tuple, Callable
+from typing import Optional, Tuple
 
 import d20
 from discord import ButtonStyle, Interaction, Embed
@@ -10,8 +10,8 @@ from sqlalchemy import select
 
 from database import Session, DowntimeTable
 from database.guild_settings_table import GuildSettingsTable
-from system import items
-from system.items import get_item_price_string
+from dnd import items
+from dnd.items import get_item_price_string
 from models import DowntimeModel
 from utils import getLogger, truncate
 
@@ -19,14 +19,14 @@ logger = getLogger(__name__)
 
 
 class DowntimeRoll:
-    roll: Callable
+    roll: callable
     _dc_fun: Optional[callable]
     _dc_int: Optional[int]
     group: Optional[int] = None
 
     def __init__(
         self,
-        roll: Callable,
+        roll: callable,
         dc_fun: Optional[callable] = None,
         dc_int: Optional[int] = None,
         group: Optional[int] = None,
@@ -111,11 +111,11 @@ class DowntimeButton(Button):
 class DowntimeView(View):
     selections: set
     wins: int
-    wins_to_outcome: Callable
+    wins_to_outcome: callable
     initiator_id: int
 
     def __init__(
-        self, stats_to_rolls: dict, wins_to_outcome: Callable, initiator_id: int
+        self, stats_to_rolls: dict, wins_to_outcome: callable, initiator_id: int
     ):
         self.wins_to_outcome = wins_to_outcome
         self.initiator_id = initiator_id
