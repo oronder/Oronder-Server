@@ -47,6 +47,15 @@ ONBOARDING_CHANNELS = {
     "voice": 990000000000000602,
 }
 
+# A third guild reserved for session-XP persistence tests: it needs its own
+# auth token so tests never share a socket.io connection with the default
+# guild's sim_foundry client.
+XP_GUILD_ID = 990000000000000700
+XP_CHANNELS = {
+    "general": 990000000000000701,
+    "voice": 990000000000000702,
+}
+
 DEFAULT_SEED = {
     "guilds": [
         {
@@ -83,6 +92,21 @@ DEFAULT_SEED = {
             ],
             "voice_channels": [
                 {"id": ONBOARDING_CHANNELS["voice"], "name": "General"},
+            ],
+            "roles": [],
+            "members": [
+                {"id": DEFAULT_GM_USER_ID, "name": "FakeGM", "roles": []},
+            ],
+        },
+        {
+            "id": XP_GUILD_ID,
+            "name": "XP Guild",
+            "owner_id": DEFAULT_GM_USER_ID,
+            "text_channels": [
+                {"id": XP_CHANNELS["general"], "name": "general"},
+            ],
+            "voice_channels": [
+                {"id": XP_CHANNELS["voice"], "name": "General"},
             ],
             "roles": [],
             "members": [
@@ -352,6 +376,18 @@ class FakeHTTPClient(_make_fake_http_base()):
                     "embeds": message["embeds"],
                 }
             )
+            return message
+
+        if method == "PATCH" and "/channels/" in path and "/messages/" in path:
+            # Message edits (e.g. mission embeds after session XP): py-cord
+            # builds a Message from the response, so answer with a full
+            # payload echoing the edited message's id. route.path keeps the
+            # {message_id} placeholder, so parse ids from the formatted url.
+            channel_id, _, message_id = (
+                entry["url"].split("/channels/")[1].split("/")[:3]
+            )
+            message = self._message_payload(channel_id, body)
+            message["id"] = str(message_id)
             return message
 
         if method == "POST" and path == "/users/@me/channels":

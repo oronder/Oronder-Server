@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Tuple
 from pydantic import AliasChoices, Field
 
 from models.base_model import OronderBaseModel
-from systems.base import BaseSystemActor, GameSystem, RollSpec
+from systems.base import BaseSystemActor, GameSystem, RollSpec, fit_sheet
 
 CHARACTERISTICS = ["str", "con", "siz", "dex", "app", "int", "pow", "edu"]
 
@@ -103,7 +103,12 @@ def roll_d100(
 
 def check_result(value: int, advantage: Optional[str] = None) -> str:
     total, _, _ = roll_d100(advantage)
-    return f"{value} / rolled {total}: {success_level(total, value)}"
+    grade = success_level(total, value)
+    # expose the roll-under thresholds alongside the grade
+    return (
+        f"{value} / rolled {total}: {grade}"
+        f" (Hard {value // 2}, Extreme {value // 5})"
+    )
 
 
 class CoC7System(GameSystem):
@@ -186,30 +191,86 @@ class CoC7System(GameSystem):
         return actor.desc_string()
 
     def summary_text(self, actor: CoC7Actor) -> str:
-        lines = [actor.desc_string()]
-        attribs = []
-        for key, label in [("hp", "HP"), ("san", "SAN"), ("mp", "MP"), ("lck", "Luck")]:
-            value = actor.attrib_value(key)
-            if value is not None:
-                attribs.append(f"{label} {value}")
-        if attribs:
-            lines.append(" | ".join(attribs))
-        characteristics = ", ".join(
-            f"{c.upper()} {actor.abilities[c].value}"
+        return self.markdown_sheet(actor)
+
+    def markdown_sheet(self, actor: CoC7Actor) -> str:
+        """Discord-markdown investigator sheet for /lookup character.
+
+        Characteristics and skills show value (half/fifth) since CoC7's
+        Hard/Extreme thresholds are value/2 and value/5. Resilient to
+        sparse payloads and kept inside the embed description limit.
+        """
+        attribs = actor.attributes or {}
+        lines = [f"**{actor.desc_string()}**"]
+
+        chars = [
+            (c, actor.abilities[c].value)
             for c in CHARACTERISTICS
             if c in actor.abilities
+        ]
+        if chars:
+            rows = [
+                "   ".join(
+                    f"{c.upper()} {v:>3} ({v // 2:>2}/{v // 5:>2})"
+                    for c, v in chars[i : i + 4]
+                )
+                for i in range(0, len(chars), 4)
+            ]
+            lines += [
+                "",
+                "**Characteristics** — value (half/fifth)",
+                "```\n" + "\n".join(rows) + "\n```",
+            ]
+
+        pools = []
+        for key, label in [("hp", "HP"), ("san", "SAN"), ("mp", "MP")]:
+            attrib = attribs.get(key)
+            value = actor.attrib_value(key)
+            if value is None:
+                continue
+            attrib_max = attrib.get("max") if isinstance(attrib, dict) else None
+            pools.append(
+                f"{label} **{value}/{attrib_max}**"
+                if attrib_max is not None
+                else f"{label} **{value}**"
+            )
+        luck = actor.attrib_value("lck")
+        if luck is not None:
+            pools.append(f"Luck **{luck}**")
+        combat = []
+        db = attribs.get("db")
+        if db not in (None, ""):
+            combat.append(f"Damage Bonus **{db}**")
+        if attribs.get("build") is not None:
+            combat.append(f"Build **{attribs['build']}**")
+        if attribs.get("mov") is not None:
+            combat.append(f"Move **{attribs['mov']}**")
+        if pools or combat:
+            lines += ["", "**Status**"]
+            if pools:
+                lines.append(" • ".join(pools))
+            if combat:
+                lines.append(" • ".join(combat))
+
+        skill_lines = [
+            f"{s.name} {s.value} ({s.value // 2}/{s.value // 5})"
+            for s in sorted(actor.skills, key=lambda s: (-s.value, s.name.lower()))
+        ]
+        before = lines + (
+            ["", "**Skills** — value (half/fifth)"] if skill_lines else []
         )
-        if characteristics:
-            lines.append(characteristics)
-        skills = ", ".join(f"{s.name} {s.value}" for s in actor.skills)
-        if skills:
-            lines.append(f"Skills: {skills}")
-        weapons = ", ".join(
-            f"{w.name} ({w.skill} {w.value}, {w.damage})"
-            if w.skill and w.damage
-            else w.name
-            for w in actor.weapons
-        )
-        if weapons:
-            lines.append(f"Weapons: {weapons}")
-        return "\n".join(lines)
+
+        after = []
+        if actor.weapons:
+            after += ["", "**Weapons**"]
+            for w in actor.weapons:
+                detail = []
+                if w.skill:
+                    detail.append(f"{w.skill} {w.value}")
+                elif w.value:
+                    detail.append(str(w.value))
+                if w.damage:
+                    detail.append(f"damage {w.damage}")
+                after.append(f"{w.name} — {', '.join(detail)}" if detail else w.name)
+
+        return fit_sheet(before, skill_lines, after)

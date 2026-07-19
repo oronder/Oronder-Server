@@ -1,10 +1,16 @@
 """Factories for seeding the database in tests."""
 
+from datetime import datetime
+
+import pytz
+
 import fake_discord
 from database.actor_table import ActorTable
 from database import Session
 from database.guild_settings_table import GuildSettingsTable
+from database.missions import MissionTable
 from models.guild_settings import GuildSettings, Subscription
+from models.missions import Mission
 from systems import BaseSystemActor, get_system, system_id_of
 
 TEST_AUTH_TOKEN = "test-auth-token"
@@ -288,6 +294,44 @@ def coc7_actor_payload(
             "systemVersion": "0.10.4",
         },
     }
+
+
+def mission(
+    *,
+    guild_id: int = fake_discord.DEFAULT_GUILD_ID,
+    title: str = "Test Mission",
+    pcs: list[str] | None = None,
+    channel_or_thread_id: int = fake_discord.DEFAULT_CHANNELS["general"],
+    **overrides,
+) -> Mission:
+    """Insert a mission row pointing at a fake-guild channel.
+
+    date_time defaults to the past so session-stop bookkeeping never tries
+    to (re)create a Discord scheduled event; channel_override=True keeps
+    created_thread() False so no thread edits are attempted.
+    """
+    values = dict(
+        guild_id=guild_id,
+        title=title,
+        min_pc_count=1,
+        max_pc_count=6,
+        gm_xp=0,
+        hook="A test mission hook.",
+        date_time=datetime(2024, 1, 1, 18, 0, tzinfo=pytz.UTC),
+        gm_id=fake_discord.DEFAULT_GM_USER_ID,
+        channel_or_thread_id=channel_or_thread_id,
+        message_id=fake_discord.next_snowflake(),
+        channel_override=True,
+        pcs=pcs or [],
+    )
+    values.update(overrides)
+    model = Mission(**values)
+    table = MissionTable.from_model(model)
+    with Session() as session:
+        session.add(table)
+        session.commit()
+        model.id = table.id
+    return model
 
 
 def seed_actor(

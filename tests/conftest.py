@@ -32,7 +32,9 @@ def pytest_configure(config):
 
 
 SERVER_HOST = "127.0.0.1"
-SERVER_PORT = 65435
+# Overridable so several suites can run side by side. The default matches
+# the Oronder module's dev-mode target; e2e tests need it to stay 65435.
+SERVER_PORT = int(os.environ.get("ORONDER_TEST_PORT", "65435"))
 SERVER_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
 FOUNDRY_ORIGIN = "http://localhost:65434"
 

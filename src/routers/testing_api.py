@@ -7,6 +7,7 @@ Foundry e2e harness can drive full round-trips without Discord.
 """
 
 import asyncio
+import time
 from types import SimpleNamespace
 from typing import Any, Optional
 
@@ -25,7 +26,13 @@ router = APIRouter(prefix="/testing")
 class FakeApplicationContext:
     """Duck-typed discord.ApplicationContext for driving command handlers."""
 
-    def __init__(self, guild_id: int, user_id: int, command_name: str = "test"):
+    def __init__(
+        self,
+        guild_id: int,
+        user_id: int,
+        command_name: str = "test",
+        channel_id: Optional[int] = None,
+    ):
         bot = discord_client.bot
         self.bot = bot
         self.guild_id = guild_id
@@ -35,7 +42,10 @@ class FakeApplicationContext:
         )
         self.interaction = SimpleNamespace(user=self.user)
         self.command = SimpleNamespace(name=command_name)
-        self.channel_id = None
+        self.channel_id = channel_id
+        self.channel = (
+            self.guild.get_channel(channel_id) if self.guild and channel_id else None
+        )
         self.deferred = False
         self.responses: list[dict] = []
 
@@ -154,6 +164,124 @@ async def xp_sync(req: XpSyncRequest):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await _socket_namespace().xp_sync(guild_settings, dict(req.actor_id_to_xp))
     return {"ok": True}
+
+
+class SessionStartRequest(BaseModel):
+    guild_id: int
+    mission_id: int
+    name: str = "Test Session"
+    start_ts: Optional[int] = None
+
+
+class SessionStopRequest(BaseModel):
+    guild_id: int
+    mission_id: int
+
+
+@router.post("/session_start")
+async def session_start(req: SessionStartRequest):
+    """Start a session, shaped like Events.on_scheduled_event_update does."""
+    payload = {
+        "name": req.name,
+        "id": req.mission_id,
+        "start_ts": req.start_ts or int(time.time() * 1000),
+        "status": "start",
+    }
+    await _socket_namespace().start_stop_session(req.guild_id, payload)
+    return {"ok": True}
+
+
+@router.post("/session_stop")
+async def session_stop(req: SessionStopRequest):
+    await _socket_namespace().start_stop_session(
+        req.guild_id, {"id": req.mission_id, "status": "stop"}
+    )
+    return {"ok": True}
+
+
+class LookupRequest(BaseModel):
+    guild_id: int
+    discord_id: int
+    kind: str  # item | spell | feat | rule | background
+    name: str
+    display: str = "public"
+
+
+@router.post("/lookup")
+async def command_lookup(req: LookupRequest):
+    """Drive a /lookup content command (dnd5e SRD data, no actor needed)."""
+    from groups.lookups import Lookups
+
+    commands = {
+        "item": Lookups.item_lookup,
+        "spell": Lookups.spell_lookup,
+        "feat": Lookups.feat_lookup,
+        "rule": Lookups.rule_lookup,
+        "background": Lookups.background_lookup,
+    }
+    command = commands.get(req.kind)
+    if command is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown lookup kind {req.kind!r}",
+        )
+    cog = discord_client.bot.cogs.get("Lookups")
+    if cog is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Lookups cog not loaded",
+        )
+    ctx = FakeApplicationContext(req.guild_id, req.discord_id, f"lookup {req.kind}")
+    await command.callback(cog, ctx, req.name, req.display)
+    return ctx.result()
+
+
+class CharacterLookupRequest(BaseModel):
+    guild_id: int
+    discord_id: int
+    character: str
+    detail: Optional[str] = None
+    display: str = "public"
+
+
+@router.post("/lookup_character")
+async def command_lookup_character(req: CharacterLookupRequest):
+    from groups.lookups import lookup_character
+
+    ctx = FakeApplicationContext(req.guild_id, req.discord_id, "character")
+    await lookup_character(
+        ctx, req.character, req.detail, req.display, _socket_namespace()
+    )
+    return await ctx.wait_for_responses()
+
+
+class DowntimeBuyRequest(BaseModel):
+    guild_id: int
+    discord_id: int
+    character: str
+    channel_id: Optional[int] = None
+    item: Optional[str] = None
+    extra_weeks: int = 0
+    extra_gold: int = 0
+
+
+@router.post("/downtime_buy")
+async def command_downtime_buy(req: DowntimeBuyRequest):
+    from groups.downtime import Downtime
+
+    cog = discord_client.bot.cogs.get("Downtime")
+    if cog is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Downtime cog not loaded",
+        )
+    ctx = FakeApplicationContext(
+        req.guild_id, req.discord_id, "buy", channel_id=req.channel_id
+    )
+    await Downtime.command_downtime_buy.callback(
+        cog, ctx, req.character, req.extra_weeks, req.extra_gold, req.item
+    )
+    return ctx.result()
 
 
 @router.post("/roll")

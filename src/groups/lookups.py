@@ -104,9 +104,11 @@ class Lookups(Cog):
         choices=display_choices,
     )
     async def rule_lookup(self, ctx: ApplicationContext, rule: str, display: str):
-        await ctx.respond(
-            **generate_rule_embed(rule), ephemeral=display == DISPLAY_PRIVATE
-        )
+        # err_msg responses already carry ephemeral=True; only default it for
+        # successful embeds so unknown rules don't raise a duplicate kwarg.
+        msg = generate_rule_embed(rule)
+        msg.setdefault("ephemeral", display == DISPLAY_PRIVATE)
+        await ctx.respond(**msg)
 
     # TODO /lookup racefeat
     # TODO /lookup race

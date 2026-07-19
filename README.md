@@ -37,8 +37,9 @@ disabled until `ADMIN_API_KEY` / `UPDATE_DISCORD_KEY` are set.
    minimum.
 4. Run `docker compose up -d` to start the server.
 5. If you have issues, run `docker logs -f oronder_server` to check logs.
-6. Note that the frontend does not currently support alternative backends out of the box. As of now, you will need to
-   manually set the api url in the Foundry addon.
+6. Point the Foundry module at your server: in Foundry, open __Configure Settings > Oronder__ and set
+   __Backend URL__ to your server's base URL (e.g. `https://oronder.example.com`). Leave it empty to use the
+   official `api.oronder.com` service.
 
 ## Required Privileged Intent
 - Server Member Intent

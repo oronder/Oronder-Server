@@ -224,6 +224,72 @@ def test_roll_d100_plain_and_zero_maps_to_100():
     assert total == 100
 
 
+def test_check_result_exposes_hard_and_extreme_thresholds():
+    from systems.coc7 import check_result
+
+    result = check_result(65)
+    assert RESULT_RE.match(result), result
+    assert result.startswith("65 / rolled ")
+    assert result.endswith("(Hard 32, Extreme 13)")
+
+
+def test_markdown_sheet():
+    from systems import get_system
+
+    system = get_system("CoC7")
+    actor = system.parse_actor(seed.coc7_actor_payload())
+    sheet = system.summary_text(actor)
+
+    # header from desc_string
+    assert "**Private Investigator, age 42**" in sheet
+    # characteristics table with half/fifth thresholds
+    assert "**Characteristics** — value (half/fifth)" in sheet
+    assert "STR  60 (30/12)" in sheet
+    assert "EDU  80 (40/16)" in sheet
+    # pools and derived stats
+    assert "HP **12/12** • SAN **55/99** • MP **12/12** • Luck **45**" in sheet
+    assert "Damage Bonus **+1d4** • Build **1** • Move **8**" in sheet
+    # skills sorted by value desc, with half/fifth
+    assert "Spot Hidden 65 (32/13)" in sheet
+    assert "Firearms (Handgun) 50 (25/10)" in sheet
+    assert sheet.index("Spot Hidden 65") < sheet.index("Firearms (Handgun) 50 (")
+    # weapons with skill value and damage
+    assert ".38 Revolver — Firearms (Handgun) 50, damage 1d10" in sheet
+    assert len(sheet) <= 4096
+
+
+def test_markdown_sheet_sparse_payload():
+    from systems import get_system
+
+    system = get_system("CoC7")
+    actor = system.parse_actor({"id": "coc7sparse000001", "name": "Sparse"})
+    sheet = system.summary_text(actor)
+
+    assert "**Investigator**" in sheet
+    assert "Characteristics" not in sheet
+    assert "Skills" not in sheet
+    assert "Weapons" not in sheet
+    assert len(sheet) <= 4096
+
+
+def test_markdown_sheet_truncates_to_embed_limit():
+    from systems import get_system
+
+    payload = seed.coc7_actor_payload()
+    payload["skills"] = [
+        {"id": f"skill{i:011d}", "name": f"Obscure Occult Discipline {i:03d}", "value": 90 - i % 60}
+        for i in range(400)
+    ]
+    system = get_system("CoC7")
+    sheet = system.summary_text(system.parse_actor(payload))
+
+    assert len(sheet) <= 4096
+    assert "… and" in sheet
+    # fixed sections survive truncation
+    assert "**Characteristics**" in sheet
+    assert ".38 Revolver — Firearms (Handgun) 50, damage 1d10" in sheet
+
+
 def test_roll_d100_bonus_and_penalty_dice():
     # bonus die: extra tens die, keep the lowest total
     total, tens, units = roll_d100("Advantage", SeqRng([5, 3, 7]))

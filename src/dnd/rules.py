@@ -20,6 +20,15 @@ conditions = dnd.load_json("conditionsdiseases")
 
 
 def generate_rule_embed(rule: str):
+    try:
+        return _generate_rule_embed(rule)
+    except (KeyError, StopIteration):
+        # unknown entry under a known prefix (e.g. "Action: Nonsense"):
+        # fall through to the same not-found error as an unknown prefix
+        return logger.err_msg(f"Rule {rule} not found.")
+
+
+def _generate_rule_embed(rule: str):
     rule = rule.rstrip("...")
 
     title = None

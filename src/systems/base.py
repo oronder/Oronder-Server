@@ -14,6 +14,26 @@ from typing import Callable, List, Optional
 from models.actor import World
 from models.base_model import OronderBaseModel
 
+# Discord's hard cap for an embed description; rendered sheets must fit.
+EMBED_DESCRIPTION_LIMIT = 4096
+
+
+def fit_sheet(
+    before: List[str],
+    items: List[str],
+    after: List[str],
+    limit: int = EMBED_DESCRIPTION_LIMIT,
+) -> str:
+    """Join sheet lines, dropping trailing `items` (with an elision note)
+    until the result fits inside a Discord embed description."""
+    for keep in range(len(items), -1, -1):
+        omitted = len(items) - keep
+        chunk = items[:keep] + ([f"… and {omitted} more"] if omitted else [])
+        text = "\n".join(before + chunk + after)
+        if len(text) <= limit:
+            return text
+    return "\n".join(before + after)[:limit]
+
 
 class BaseSystemActor(OronderBaseModel):
     """Minimal envelope shared by every system's actor model (contract 1)."""

@@ -1,6 +1,7 @@
 import os
 import uuid
 from datetime import date as dt_date
+from pathlib import Path
 from typing import List
 
 from sqlalchemy import (
@@ -8,9 +9,11 @@ from sqlalchemy import (
     BigInteger,
     Date,
     Integer,
+    MetaData,
     UUID,
     create_engine,
     func,
+    inspect,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -30,7 +33,21 @@ logger = getLogger(__name__)
 
 
 class Base(DeclarativeBase, MappedAsDataclass):
-    pass
+    # Deterministic constraint names so future Alembic migrations can refer
+    # to them.  Verified to produce zero autogenerate diffs against a
+    # database created by the historical convention-less create_all():
+    # "ix" matches SQLAlchemy's default, the only unique constraint has an
+    # explicit name, there are no FK/CK constraints, and Alembic does not
+    # diff primary-key constraint names.
+    metadata = MetaData(
+        naming_convention={
+            "ix": "ix_%(column_0_label)s",
+            "uq": "uq_%(table_name)s_%(column_0_name)s",
+            "ck": "ck_%(table_name)s_%(constraint_name)s",
+            "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+            "pk": "pk_%(table_name)s",
+        }
+    )
 
 
 def _database_url() -> str:
@@ -132,8 +149,54 @@ class GoldLedger(Base):
     balance: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
-def init_db():
-    with Session() as session:
-        Base.metadata.create_all(
-            session.get_bind().engine
-        )
+def _alembic_config(url: str):
+    """Alembic Config built in code (no alembic.ini, no subprocess).
+
+    The script location is resolved relative to this package file so it works
+    from any CWD: ``<repo>/src/database`` has the scripts at
+    ``<repo>/alembic``, the container's ``/app/database`` at ``/app/alembic``.
+    """
+    from alembic.config import Config
+
+    package_dir = Path(__file__).resolve().parent
+    for root in (package_dir.parent.parent, package_dir.parent):
+        script_location = root / "alembic"
+        if (script_location / "env.py").is_file():
+            break
+    else:
+        raise RuntimeError(f"No alembic directory found relative to {package_dir}")
+
+    config = Config()
+    config.set_main_option("script_location", str(script_location))
+    config.attributes["database_url"] = url
+    return config
+
+
+def init_db(bind=None):
+    """Create or upgrade the schema. Idempotent; runs in the app lifespan.
+
+    - Empty database (no tables): create_all, then stamp the alembic head.
+    - Tables but no alembic_version (deployment that predates alembic):
+      stamp head without touching the existing schema or data.
+    - alembic_version present: run any pending migrations up to head.
+    """
+    from alembic import command
+
+    db_engine = bind if bind is not None else engine
+    config = _alembic_config(db_engine.url.render_as_string(hide_password=False))
+
+    with db_engine.connect() as connection:
+        config.attributes["connection"] = connection
+        table_names = inspect(connection).get_table_names()
+
+        if "alembic_version" in table_names:
+            command.upgrade(config, "head")
+        elif table_names:
+            logger.warning("Existing schema without alembic_version: stamping head")
+            command.stamp(config, "head")
+        else:
+            logger.warning("Empty database: creating schema and stamping head")
+            Base.metadata.create_all(connection)
+            command.stamp(config, "head")
+
+        connection.commit()

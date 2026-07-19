@@ -209,3 +209,78 @@ def test_xp_model():
     assert system.get_lvl(1000) == 2
     assert system.get_lvl(19000) == 20
     assert system.get_lvl(1_000_000) == 20
+
+
+def test_markdown_sheet():
+    from systems import get_system
+
+    system = get_system("pf2e")
+    actor = system.parse_actor(seed.pf2e_actor_payload())
+    sheet = system.summary_text(actor)
+
+    # header: ancestry (heritage) class level — background, then xp display
+    assert "**Dwarf (Rock Dwarf) Fighter 5** — Warrior" in sheet
+    assert "**XP:** 400/1000 (Level 5)" in sheet
+    # defenses
+    assert "AC **24**" in sheet
+    assert "HP **58**" in sheet
+    assert "Class DC **19**" in sheet
+    assert "Speed **25 ft**" in sheet
+    assert "Fort **+9** • Ref **+7** • Will **+6** • Perception **+8**" in sheet
+    # ability mod table
+    assert "STR  DEX  CON  INT  WIS  CHA" in sheet
+    assert "+4   +1   +2   +0   +1   -1" in sheet
+    # skills with rank labels, lore skills included
+    assert "Athletics +5 (Trained)" in sheet
+    assert "Warfare Lore +3 (Trained)" in sheet
+    assert "Untrained: Acrobatics +2" in sheet
+    # weapons and currency
+    assert "Warhammer — `1d20 + 11`" in sheet
+    assert "**Wealth:** 10 gp" in sheet
+    assert len(sheet) <= 4096
+
+
+def test_markdown_sheet_sparse_payload():
+    from systems import get_system
+
+    system = get_system("pf2e")
+    actor = system.parse_actor({"id": "pf2esparse000001", "name": "Sparse"})
+    sheet = system.summary_text(actor)
+
+    assert "**Adventurer 1**" in sheet
+    assert "Perception **+0**" in sheet
+    # nothing optional leaked in
+    assert "XP" not in sheet
+    assert "Wealth" not in sheet
+    assert "Weapons" not in sheet
+    assert len(sheet) <= 4096
+
+
+def test_markdown_sheet_truncates_to_embed_limit():
+    from systems import get_system
+
+    payload = seed.pf2e_actor_payload()
+    for i in range(400):
+        payload["skills"][f"lore-topic-{i:03d}"] = {
+            "mod": 3,
+            "rank": 1,
+            "label": f"Extremely Verbose Topic {i:03d} Lore",
+        }
+    system = get_system("pf2e")
+    sheet = system.summary_text(system.parse_actor(payload))
+
+    assert len(sheet) <= 4096
+    assert "… and" in sheet
+    # fixed sections survive truncation
+    assert "**Defenses**" in sheet
+    assert "Warhammer — `1d20 + 11`" in sheet
+
+
+def test_initiative_descriptor_mentions_perception():
+    from systems import get_system
+
+    system = get_system("pf2e")
+    actor = system.parse_actor(seed.pf2e_actor_payload())
+    spec = system.build_roll(actor, "Pf2e Hero", "Initiative", None, False)
+    assert spec.descriptor == "Pf2e Hero rolls Perception for Initiative!"
+    assert spec.payload == {"type": "init", "stat": "perception", "advantage": None}

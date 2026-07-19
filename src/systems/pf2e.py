@@ -7,7 +7,7 @@ from pydantic import AliasChoices, Field
 
 from models.actor import earned_xp_and_starting_level
 from models.base_model import OronderBaseModel
-from systems.base import BaseSystemActor, GameSystem, RollSpec
+from systems.base import BaseSystemActor, GameSystem, RollSpec, fit_sheet
 
 SKILL_SLUGS = [
     "acrobatics",
@@ -30,8 +30,20 @@ SKILL_SLUGS = [
 
 SAVE_SLUGS = ["fortitude", "reflex", "will"]
 
+ABILITY_ORDER = ["str", "dex", "con", "int", "wis", "cha"]
+
+# pf2e proficiency ranks 0-4
+RANK_LABELS = ["Untrained", "Trained", "Expert", "Master", "Legendary"]
+
 XP_PER_LEVEL = 1000
 MAX_LEVEL = 20
+
+
+def rank_label(rank) -> str:
+    try:
+        return RANK_LABELS[max(0, min(int(rank), 4))]
+    except (TypeError, ValueError):
+        return RANK_LABELS[0]
 
 
 class Pf2eAbility(OronderBaseModel):
@@ -98,6 +110,16 @@ class Pf2eActor(BaseSystemActor):
         ]
         return f"{' '.join(parts) or 'Adventurer'} {self.details.level}"
 
+    def xp_display(self) -> Optional[str]:
+        """'400/1000 (Level 5)', or None when the module sent no XP."""
+        xp = self.details.xp or {}
+        value = xp.get("value")
+        if value is None:
+            return None
+        xp_max = xp.get("max")
+        amount = f"{value}/{xp_max}" if xp_max else str(value)
+        return f"{amount} (Level {self.details.level})"
+
 
 def _skill_slugs(skills: dict) -> List[str]:
     """All skill slugs for an actor: the fixed list plus dynamic lore-*."""
@@ -160,7 +182,7 @@ class Pf2eSystem(GameSystem):
         elif stat_type == "perception":
             descriptor = "Perception Check"
         elif stat_type == "init":
-            descriptor = f"{character} rolls for Initiative!"
+            descriptor = f"{character} rolls Perception for Initiative!"
         else:
             descriptor = f"{actor.skill_label(slug)} Skill Check"
 
@@ -208,31 +230,107 @@ class Pf2eSystem(GameSystem):
         return actor.desc_string()
 
     def summary_text(self, actor: Pf2eActor) -> str:
-        lines = [actor.desc_string()]
-        hp = actor.attributes.hp.get("max")
-        ac = actor.attributes.ac.get("value")
-        if hp is not None:
-            lines.append(f"HP: {hp}")
-        if ac is not None:
-            lines.append(f"AC: {ac}")
-        saves = ", ".join(
-            f"{slug.title()} {actor.attributes.saves[slug].mod:+d}"
-            for slug in SAVE_SLUGS
-            if slug in actor.attributes.saves
+        return self.markdown_sheet(actor)
+
+    def markdown_sheet(self, actor: Pf2eActor) -> str:
+        """Discord-markdown character sheet for /lookup character.
+
+        Mirrors the 5e sheet's structure (header, defenses, abilities,
+        skills, attacks, wealth) scaled to the pf2e payload. Resilient to
+        sparse payloads and kept inside the embed description limit.
+        """
+        details = actor.details
+        attrs = actor.attributes
+
+        ancestry = details.ancestry or ""
+        if ancestry and details.heritage:
+            ancestry = f"{details.ancestry} ({details.heritage})"
+        elif details.heritage:
+            ancestry = details.heritage
+        who = " ".join(
+            p for p in [ancestry, details.class_name or "Adventurer"] if p
         )
-        if saves:
-            lines.append(f"Saves: {saves}")
-        lines.append(f"Perception: {actor.attributes.perception.mod:+d}")
-        trained = [
-            f"{actor.skill_label(slug)} {skill.mod:+d}"
-            for slug, skill in actor.skills.items()
-            if skill.rank > 0
+        header = f"**{who} {details.level}**"
+        if details.background:
+            header += f" — {details.background}"
+        lines = [header]
+
+        xp = actor.xp_display()
+        if xp:
+            lines.append(f"**XP:** {xp}")
+
+        defense_bits = []
+        ac = (attrs.ac or {}).get("value")
+        if ac is not None:
+            defense_bits.append(f"AC **{ac}**")
+        hp = (attrs.hp or {}).get("max")
+        if hp is not None:
+            defense_bits.append(f"HP **{hp}**")
+        if attrs.class_dc is not None:
+            defense_bits.append(f"Class DC **{attrs.class_dc}**")
+        if attrs.speed is not None:
+            speed = (
+                int(attrs.speed)
+                if float(attrs.speed).is_integer()
+                else attrs.speed
+            )
+            defense_bits.append(f"Speed **{speed} ft**")
+        save_bits = [
+            f"{label} **{attrs.saves[slug].mod:+d}**"
+            for slug, label in [
+                ("fortitude", "Fort"),
+                ("reflex", "Ref"),
+                ("will", "Will"),
+            ]
+            if slug in attrs.saves
         ]
-        if trained:
-            lines.append(f"Skills: {', '.join(trained)}")
-        weapons = [
-            f"{w.name} ({w.attack})" if w.attack else w.name for w in actor.weapons
+        save_bits.append(f"Perception **{attrs.perception.mod:+d}**")
+        lines += ["", "**Defenses**"]
+        if defense_bits:
+            lines.append(" • ".join(defense_bits))
+        lines.append(" • ".join(save_bits))
+
+        mods = [
+            (abrv, actor.abilities[abrv].mod)
+            for abrv in ABILITY_ORDER
+            if abrv in actor.abilities
         ]
-        if weapons:
-            lines.append(f"Weapons: {', '.join(weapons)}")
-        return "\n".join(lines)
+        if mods:
+            head = " ".join(f"{abrv.upper():>4}" for abrv, _ in mods)
+            row = " ".join(f"{mod:+d}".rjust(4) for _, mod in mods)
+            lines += ["", "**Ability Modifiers**", f"```\n{head}\n{row}\n```"]
+
+        slugs = [s for s in SKILL_SLUGS if s in actor.skills]
+        slugs += sorted(s for s in actor.skills if s.startswith("lore-"))
+        ranked = [(s, actor.skills[s]) for s in slugs if actor.skills[s].rank > 0]
+        untrained = [(s, actor.skills[s]) for s in slugs if actor.skills[s].rank <= 0]
+        skill_lines = [
+            f"{actor.skill_label(slug)} {skill.mod:+d} ({rank_label(skill.rank)})"
+            for slug, skill in ranked
+        ]
+        if untrained:
+            skill_lines.append(
+                "Untrained: "
+                + ", ".join(
+                    f"{actor.skill_label(slug)} {skill.mod:+d}"
+                    for slug, skill in untrained
+                )
+            )
+        before = lines + (["", "**Skills**"] if skill_lines else [])
+
+        after = []
+        if actor.weapons:
+            after += ["", "**Weapons**"]
+            after += [
+                f"{w.name} — `{w.attack}`" if w.attack else w.name
+                for w in actor.weapons
+            ]
+        coins = [
+            f"{actor.currency.get(coin)} {coin}"
+            for coin in ["pp", "gp", "sp", "cp"]
+            if actor.currency.get(coin)
+        ]
+        if coins:
+            after += ["", "**Wealth:** " + ", ".join(coins)]
+
+        return fit_sheet(before, skill_lines, after)

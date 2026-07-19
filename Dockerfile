@@ -27,5 +27,9 @@ RUN uv sync --no-dev
 ENV VIRTUAL_ENV=/app/.venv \
     PATH=/app/.venv/bin:$PATH
 
+# Migration scripts; init_db() resolves this as a sibling of the database
+# package (/app/database -> /app/alembic)
+COPY alembic /app/alembic
+
 # Copy source code last since it changes most frequently
 COPY src /app/

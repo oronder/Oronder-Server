@@ -53,6 +53,28 @@ The suite starts the full app (FastAPI + socket.io + fake Discord) on
 (`sim_foundry` fixture) connects over socket.io and answers roll requests,
 so Discord→Foundry round-trips are covered without Foundry.
 
+## Migrations
+
+Schema changes are managed with Alembic (`alembic/`, revisions in
+`alembic/versions/`). `database.init_db()` runs on app startup and brings
+any database to the current head: an empty database gets `create_all` +
+stamp, a pre-alembic database (tables but no `alembic_version`) is stamped
+as-is, and anything else gets `upgrade head`.
+
+To add a migration during development: change the models in
+`src/database/`, point `DATABASE_URL` at a database that is at the current
+head (e.g. a scratch database that `init_db()` or `alembic upgrade head`
+was run against), and autogenerate:
+
+```sh
+DATABASE_URL=postgresql://postgres@127.0.0.1:55432/mydb \
+  uv run alembic revision --autogenerate -m "add foo column"
+```
+
+Review the generated file (autogenerate misses things like enum type
+drops and server defaults), then verify with `uv run pytest
+tests/test_migrations.py`.
+
 ## End-to-end with real Foundry
 
 `tests/e2e/` boots a real, headless Foundry VTT and logs in as Gamemaster
