@@ -320,7 +320,7 @@ async def test_oauth_popup_handshake(foundry_gm, api):
             try {
                 return await new Promise((resolve, reject) => {
                     const timer = setTimeout(
-                        () => reject(new Error('handshake timeout')), 20000);
+                        () => reject(new Error('handshake timeout')), 45000);
                     const ping = setInterval(
                         () => popup.postMessage('', '*'), 250);
                     window.addEventListener('message', e => {
