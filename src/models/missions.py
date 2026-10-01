@@ -18,12 +18,18 @@ from pydantic import field_validator, AwareDatetime
 from database import Session, CampaignTable
 from database.actor_table import ActorTable
 from database.guild_settings_table import GuildSettingsTable
-from system.items import format_number
+from dnd.items import format_number
 from models import CampaignModel
 from models.actor import Actor
 from models.base_model import OronderBaseModel
 from models.systems import System
-from utils import mention_safe, get_image_bytes, getLogger, check_permissions
+from utils import (
+    mention_safe,
+    mention_user,
+    get_image_bytes,
+    getLogger,
+    check_permissions,
+)
 
 logger = getLogger(__name__)
 
@@ -106,7 +112,7 @@ class Mission(OronderBaseModel):
         embed = (
             Embed(title=title)
             .add_field(name="Hook", value=self.render_hook())
-            .add_field(name="GM", value=mention_safe(guild.get_member(self.gm_id)))
+            .add_field(name="GM", value=mention_user(self.gm_id))
             .add_field(name=pc_name, value=pc_value)
             .add_field(name="Date", value=format_dt(self.date_time))
         )
@@ -216,7 +222,7 @@ class Mission(OronderBaseModel):
         description_str.extend(
             [
                 "",
-                f"**GM**: {mention_safe(guild.get_member(self.gm_id))}",
+                f"**GM**: {mention_user(self.gm_id)}",
                 f"**Players**: {len(self.pcs)}/{self.max_pc_count}",
             ]
         )

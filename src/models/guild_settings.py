@@ -11,17 +11,11 @@ from pydantic.functional_validators import BeforeValidator, model_validator
 import utils
 from models.base_model import OronderBaseModel
 from utils import (
-    oronder_server_id,
-    supporter_role_id,
-    chris_discord_id,
-    tomp_discord_id,
+    BETA_TESTER_ROLE_ID,
+    HOME_GUILD_ID,
+    SUBSCRIPTION_EXEMPT_USER_IDS,
+    SUPPORTER_ROLE_ID,
     getLogger,
-    johan_discord_id,
-    kabs_discord_id,
-    gander7_discord_id,
-    oronder_bot_test,
-    oronder_bot_dev,
-    beta_tester_role_id,
     check_permissions,
 )
 
@@ -135,7 +129,10 @@ class GuildSettings(OronderBaseModel):
 
         now = datetime.now(pytz.timezone(self.timezone))
         next_run = now.replace(
-            hour=self.rollcall_time.hour, minute=self.rollcall_time.minute
+            hour=self.rollcall_time.hour,
+            minute=self.rollcall_time.minute,
+            second=0,
+            microsecond=0,
         )
         days_til_next_run = (self.rollcall_day.value - now.weekday()) % 7
         if days_til_next_run == 0 and now.time() > self.rollcall_time:
@@ -217,6 +214,22 @@ class GuildSettings(OronderBaseModel):
                     )
                 )
 
+        if self.rollcall_enabled:
+            rollcall_channel = guild.get_channel(self.rollcall_channel_id)
+            if rollcall_channel:
+                missing_permissions = check_permissions(
+                    rollcall_channel,
+                    guild.self_role,
+                    external=external,
+                    requires_polls=True,
+                )
+                if missing_permissions:
+                    errs.append(
+                        err_str(
+                            "Roll Call Channel", missing_permissions, rollcall_channel
+                        )
+                    )
+
         return errs
 
     def to_interface(self, guild: Guild) -> GuildSettingsInterface:
@@ -296,25 +309,25 @@ class GuildSettings(OronderBaseModel):
         return self
 
 
+def role_member_ids(bot: Bot, role_id: int | None) -> set[int]:
+    # Empty, rather than raising, when the home guild or role isn't configured
+    # or the bot isn't in that guild -- as on any self-hosted instance, where
+    # the old code crashed pairing.
+    home = bot.get_guild(HOME_GUILD_ID) if HOME_GUILD_ID else None
+    role = home.get_role(role_id) if home and role_id else None
+    # role.members is a list of Member objects, and Member only compares equal
+    # to another user object, so compare ids.
+    return {m.id for m in role.members} if role else set()
+
+
 def current_subscription(bot: Bot, guild: Guild):
     out = Subscription.none
 
-    if bot.application_id in [oronder_bot_test, oronder_bot_dev]:
+    if guild.owner_id in SUBSCRIPTION_EXEMPT_USER_IDS:
         out = Subscription.exempt
-    if guild.owner_id in [
-        chris_discord_id,
-        tomp_discord_id,
-        johan_discord_id,
-        kabs_discord_id,
-        gander7_discord_id,
-    ]:
+    elif guild.owner_id in role_member_ids(bot, BETA_TESTER_ROLE_ID):
         out = Subscription.exempt
-    elif (
-        guild.owner_id
-        in bot.get_guild(oronder_server_id).get_role(beta_tester_role_id).members
-    ):
-        out = Subscription.exempt
-    elif guild.owner_id in bot.get_guild(oronder_server_id).get_role(supporter_role_id).members:
+    elif guild.owner_id in role_member_ids(bot, SUPPORTER_ROLE_ID):
         out = Subscription.supporter
 
     logger.info(f'SUBSCRIPTION: {guild.id} = {out}')

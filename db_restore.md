@@ -12,7 +12,8 @@ docker exec -it oronder-db bash
 From the docker container, restore the backup
 ```bash
 set PGPASSWORD="$POSTGRES_PASSWORD"
-gunzip -c db_backup.tar.gz | pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+# --no-acl skips grants to roles that may not exist on the new server (e.g. metabase_readonly)
+gunzip -c db_backup.tar.gz | pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --no-acl
 ```
 
 After you've started the container, open a psql shell with:

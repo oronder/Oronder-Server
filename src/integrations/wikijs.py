@@ -16,8 +16,9 @@ _url = os.getenv("WIKIJS_URL")
 _token = os.getenv("WIKIJS_TOKEN")
 
 valid = _url and _token
+if not valid:
+    logger.warning(f"WikiJS endpoint unset {_url=} {_token=}")
 
-_url = parse.urljoin(_url, "graphql")
 _headers = {
     "Accept-Encoding": "gzip, deflate",
     "Content-Type": "application/json",

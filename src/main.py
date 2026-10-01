@@ -36,7 +36,16 @@ async def lifespan(a: FastAPI):
             a.routes.append(new_route)
 
     await wikijs_task_queue.start_worker()
-    await discord_client.bot.wait_until_ready()
+    # Wait for Discord, but don't let it hold the HTTP API hostage. A gateway
+    # rate limit (two restarts close together will do it) can keep the client
+    # reconnecting for minutes, and blocking here meant uvicorn never bound its
+    # port: no Foundry sync, no heartbeat, nothing. Endpoints that need the bot
+    # await wait_until_ready() themselves via get_bot(), so serving early is
+    # safe -- they wait, the rest of the API works.
+    try:
+        await asyncio.wait_for(discord_client.bot.wait_until_ready(), timeout=120)
+    except asyncio.TimeoutError:
+        logger.critical("Discord not ready after 120s; serving HTTP anyway")
 
     yield
     logger.critical("SHUTTING DOWN")
@@ -64,7 +73,7 @@ sio_asgi_app = socketio.ASGIApp(socketio_server=sio, other_asgi_app=app)
 # noinspection PyTypeChecker
 app.add_route("/socket.io/", route=sio_asgi_app, methods=["GET", "POST"])
 # noinspection PyTypeChecker
-app.add_websocket_route("/socket.io/", sio_asgi_app)
+app.router.add_websocket_route("/socket.io/", sio_asgi_app)
 
 if logger.level <= logging.DEBUG:
     from fastapi.exceptions import RequestValidationError

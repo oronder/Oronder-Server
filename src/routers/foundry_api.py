@@ -1,7 +1,11 @@
 import base64
 import json
+import math
 import os
 import secrets
+
+import discord
+import time
 from pprint import pformat
 from typing import Annotated
 
@@ -23,10 +27,10 @@ from models.guild_settings import (
     current_subscription,
 )
 from utils import (
-    oronder_dnd_server_id,
+    CHANGELOG_CHANNEL_ID,
+    WIKIJS_GUILD_IDS,
+    ensure_members,
     getLogger,
-    oronder_server_id,
-    oronder_changelog_channel_id,
     disord_token_url,
     timezones,
 )
@@ -99,23 +103,138 @@ async def heart_beat():
     return "thump thump"
 
 
+# py-cord logs "Can't keep up" above 10s; normal is well under 1s.
+MAX_GATEWAY_LATENCY = 30.0
+
+
+def _app_id_from_token() -> str:
+    # A bot token's first segment is the application id, base64-encoded, so this
+    # answers before the gateway connects (bot.application_id is set at READY).
+    first = os.environ["DISCORD_TOKEN"].split(".")[0]
+    return base64.b64decode(first + "=" * (-len(first) % 4)).decode()
+
+
+@router.get("/config")
+async def config():
+    """What a client needs before it can pair: which Discord application to
+    authorize against, and the redirect that application must have registered.
+
+    Unauthenticated, because both are public: the application id appears in
+    every invite link, and the redirect is a URL on this server. Serving them
+    means a self-hosted instance only has to tell the Foundry module its
+    origin. The module previously hardcoded both, and they have to match the
+    server exactly or Discord refuses the pairing.
+    """
+    app_id = discord_client.bot.application_id or _app_id_from_token()
+    return {"discord_app_id": str(app_id), "redirect_uri": REDIRECT_URI}
+
+
+@router.get("/health")
+async def health():
+    """Container healthcheck: the HTTP API *and* the Discord gateway.
+
+    The heartbeat above only proves HTTP is up. On 2026-09-21 the gateway was
+    dead for 11 hours -- the bot was bound to an event loop nothing ran --
+    while the heartbeat kept answering 200 and Docker reported healthy.
+
+    Reads client state only: no Discord calls, no waiting, so it answers fast
+    even when the gateway is wedged.
+    """
+    bot = discord_client.bot
+    problems = []
+    if bot.is_closed():
+        problems.append("gateway closed")
+    if not bot.is_ready():
+        problems.append("not ready")
+
+    # nan with no websocket, inf before the first heartbeat ack. During the
+    # incident this read ~2000s: it is the value behind py-cord's "websocket is
+    # X s behind" warning.
+    latency = bot.latency
+    if not math.isfinite(latency) or latency > MAX_GATEWAY_LATENCY:
+        shown = f"{latency:.1f}s" if math.isfinite(latency) else str(latency)
+        problems.append(f"gateway latency {shown}")
+
+    # A heartbeat thread that can no longer send stops receiving acks; catch it
+    # even if the last measured latency looks fine. Absent mid-reconnect.
+    keep_alive = getattr(getattr(bot, "ws", None), "_keep_alive", None)
+    if keep_alive is not None:
+        silent = time.perf_counter() - keep_alive._last_ack
+        if silent > 3 * keep_alive.interval:
+            problems.append(f"no heartbeat ack for {silent:.0f}s")
+
+    if problems:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="; ".join(problems)
+        )
+    return {"status": "ok", "gateway_latency": round(latency, 3)}
+
+
 @router.post("/update_discord")
 async def update_foundry_module(js: dict, authorization: str = Header()):
-    key = "CiHI3kGl1eMJBY4pvAxcHSAai5jdPhkaIPDlOeHuxg9GUpaSROTcTAehTb8vMH8xZVrX97tmy508WQd2fJa98CRC2P4qs"
-    if not secrets.compare_digest(authorization, key):
+    # Posts to the changelog channel as the bot, so it needs a real secret.
+    # Read per request rather than at import: self-hosted instances have no
+    # module release pipeline and shouldn't need to set it. Fail closed when
+    # it is unset -- a missing key must never mean "no check".
+    key = os.environ.get("UPDATE_DISCORD_KEY")
+    if not key or not secrets.compare_digest(authorization, key):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
     logger.critical(f"POSTING ADDON UPDATE MSG {js=}")
 
     version = js.get("version")
     changes = js.get("changes")
-    changes = "\n".join([f"- {c}" for c in changes])
     if version and changes:
-        bot = await get_bot()
-        changelog_channel = bot.get_guild(oronder_server_id).get_channel(
-            oronder_changelog_channel_id
+        await _post_changelog(f"Foundry Module {version}", changes)
+
+
+@router.post("/changelog")
+async def post_changelog(js: dict, authorization: str = Header()):
+    """Announce a release in the changelog channel, as the bot.
+
+    The module pipeline has /update_discord; this is the general form, used by
+    this repo's own workflow to post backend changes under their own heading.
+    """
+    key = os.environ.get("UPDATE_DISCORD_KEY")
+    if not key or not secrets.compare_digest(authorization, key):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    title = js.get("title")
+    changes = js.get("changes")
+    if not title or not changes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="title and changes are both required.",
         )
-        msg = await changelog_channel.send(f"**Foundry Module {version}**\n{changes}")
+    await _post_changelog(title, changes)
+
+
+async def _post_changelog(header: str, changes: list[str]) -> None:
+    bot = await get_bot()
+    changelog_channel = (
+        bot.get_channel(CHANGELOG_CHANNEL_ID) if CHANGELOG_CHANNEL_ID else None
+    )
+    if changelog_channel is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Changelog channel not configured.",
+        )
+    body = "\n".join(f"- {c}" for c in changes)
+    try:
+        msg = await changelog_channel.send(f"**{header}**\n{body}")
+    except discord.Forbidden as e:
+        # The likeliest misconfiguration: the channel exists but the bot cannot
+        # write to it. Say so, rather than returning a traceback.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Cannot post in #{changelog_channel}: {e}",
+        ) from e
+    try:
+        # Only announcement channels can publish, and only those let other
+        # servers follow the changelog. A plain text channel is a perfectly
+        # reasonable choice for a self-hosted instance, so do not fail on it.
         await msg.publish()
+    except discord.HTTPException as e:
+        logger.info(f"not published ({e}); posted to #{changelog_channel} anyway")
 
 
 @router.put("/actor")
@@ -125,7 +244,7 @@ async def upsert_actor(
     actor_orm = ActorTable.from_model(actor, guild_settings.id)
     session.merge(actor_orm)
     session.commit()
-    if guild_settings.id in [oronder_dnd_server_id]:
+    if guild_settings.id in WIKIJS_GUILD_IDS:
         logger.warning(f"Upserting {actor.name} to wiki!")
         wikijs_task_queue.add_task(upload_to_wiki, actor)
 
@@ -141,7 +260,7 @@ async def delete_actor(
             .one()
         )
 
-        if guild_settings.id in [oronder_dnd_server_id]:
+        if guild_settings.id in WIKIJS_GUILD_IDS:
             logger.warning(f"Deleting {actor.name} from wiki!")
             wikijs_task_queue.add_task(delete_from_wiki, Actor.model_validate(actor))
 
@@ -249,6 +368,7 @@ async def init(
         )
 
     GuildSettingsTable.commit(guild_settings)
+    await ensure_members(guild)
     return init_return(
         {
             "auth": auth_token,
@@ -270,6 +390,7 @@ async def get_guild_info(
             detail=f"Bot cannot connect to Discord Server: {guild_settings.id}.",
         )
 
+    await ensure_members(guild)
     return guild_settings.to_interface(guild)
 
 
@@ -283,4 +404,4 @@ async def update_guild_info(
     GuildSettingsTable.commit(guild_settings)
     guild = bot.get_guild(guild_settings.id)
 
-    return {'errs': guild_settings.validate_channels(guild, True)}
+    return {"errs": guild_settings.validate_channels(guild, True)}

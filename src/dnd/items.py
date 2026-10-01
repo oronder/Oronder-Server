@@ -1,15 +1,14 @@
-import html
 import random
 import re
+from functools import cache
 from typing import Callable
 
 import d20
-import httpx
 from discord import Embed
 
-import system
-from system.spells import spells_by_level, spells_by_name, spell_names, st_nd_rd_th
-from utils import capitalize_title, getLogger, join_list
+import dnd
+from dnd import spells
+from utils import capitalize_title, getLogger, join_list, truncate
 
 logger = getLogger(__name__)
 
@@ -27,9 +26,129 @@ attack_modes_reversed = {v: k for k, v in attack_modes.items()}
 attack_modes_human: list[str] = list(attack_modes.keys())
 attack_modes_machine: list[str] = list(attack_modes.values())
 
-loot_table, variant_table, item_table = [
-    system.load_json(f) for f in ["loot", "magicvariants", "items"]
-]
+
+def _spell_names():
+    """Every spell name, or none when no spell data is configured.
+
+    Spell scrolls are the only thing items need spells for, so a missing or
+    misconfigured spell source costs the scrolls rather than the whole shop.
+    """
+    try:
+        return spells.spell_names
+    except dnd.DataUnavailable as e:
+        logger.warning(f"no spell data, not listing spell scrolls: {e}")
+        return []
+
+
+def _spell(name: str):
+    """The named spell, or None when it is unknown or there is no spell data."""
+    try:
+        return spells.spells_by_name.get(name)
+    except dnd.DataUnavailable:
+        return None
+
+
+def _spells_of_level(level: int):
+    """Spells of a level, or none when no spell data is configured."""
+    try:
+        return spells.spells_by_level[level]
+    except dnd.DataUnavailable:
+        return []
+
+
+@cache
+def ensure_loaded():
+    """Build the data-derived tables. Called on first use, not at import,
+    so that importing this module for its pure helpers (format_number,
+    attack_modes, calculate_average_damage) never needs the 5e data.
+    """
+    global loot_table, variant_table, item_table, generics, variants_dict
+    global magic_items, items_to_rarity, all_items, shoppable_items
+
+    loot_table, variant_table, item_table = [
+        dnd.load_json(f) for f in ["loot", "magicvariants", "items"]
+    ]
+    # Filter both tables to the configured sources here, rather than in each
+    # lookup. 518 magic items and 49 variants are printed in both the 2014 and
+    # 2024 books -- DMG and XDMG each define "+1 Weapon" -- and the lookups
+    # took whichever came first in the file, so an item's text, page and
+    # footer could come from an edition this instance does not use.
+    #
+    # Newer data sets also carry `_copy` variants that reference another entry
+    # instead of carrying an `inherits` block, and cannot be resolved alone.
+    variant_table["magicvariant"] = [
+        v
+        for v in variant_table["magicvariant"]
+        if "inherits" in v and v["inherits"].get("source") in dnd.allowed_sources
+    ]
+    item_table["item"] = [
+        i for i in item_table["item"] if i.get("source") in dnd.allowed_sources
+    ]
+    generics = [
+        g
+        for g in dnd.base_table["baseitem"]
+        if g["source"] in dnd.allowed_sources
+        and g.get("age") not in dnd.disallowed_ages
+    ]
+    variants_dict = {
+        get_item_name(g, v): {
+            "generic": g["name"],
+            "variant": v["name"],
+            "rarity": v["inherits"]["rarity"],
+        }
+        for g in generics
+        for v in variant_table["magicvariant"]
+        if any(
+            all(g.get(k) == v for (k, v) in requirement.items())
+            for requirement in v["requires"]
+        )
+        and (
+            "excludes" not in v
+            or all(g.get(k) != v for (k, v) in v["excludes"].items())
+        )
+    }
+    magic_items = [
+        (i["name"], i.get("rarity", "unknown"))
+        for i in item_table["item"]
+        if i["source"] in dnd.allowed_sources
+        and "$" not in i.get("type", [])
+        and i.get("age") not in dnd.disallowed_ages
+        and i["name"] not in variants_dict
+    ]
+    items_to_rarity = dict(
+        magic_items
+        + [(g["name"], "none") for g in generics]
+        + [(k, v["rarity"]) for k, v in variants_dict.items()]
+    )
+    all_items = items_to_rarity.keys()
+    shoppable_items = [
+        k
+        for (k, v) in items_to_rarity.items()
+        if v in ["common", "uncommon", "rare", "very rare", "legendary"]
+    ] + [f"{SCROLL_OF} {spell}" for spell in _spell_names()]
+
+
+_LAZY = frozenset(
+    {
+        "loot_table",
+        "variant_table",
+        "item_table",
+        "generics",
+        "variants_dict",
+        "magic_items",
+        "items_to_rarity",
+        "all_items",
+        "shoppable_items",
+    }
+)
+
+
+def __getattr__(name):
+    """Build the tables on first attribute access instead of at import."""
+    if name in _LAZY:
+        ensure_loaded()
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def get_item_name(generic: dict, variant: dict) -> str:
@@ -38,48 +157,11 @@ def get_item_name(generic: dict, variant: dict) -> str:
     return join_list([prefix, generic["name"], suffix], "")
 
 
-generics = [
-    g
-    for g in system.base_table["baseitem"]
-    if g["source"] in system.legal_sources and g.get("age") not in system.illegal_ages
-]
-
-variants_dict = {
-    get_item_name(g, v): {
-        "generic": g["name"],
-        "variant": v["name"],
-        "rarity": v["inherits"]["rarity"],
-    }
-    for g in generics
-    for v in variant_table["magicvariant"]
-    if v["inherits"]["source"] in system.legal_sources
-    and any(
-        all(g.get(k) == v for (k, v) in requirement.items())
-        for requirement in v["requires"]
-    )
-    and ("excludes" not in v or all(g.get(k) != v for (k, v) in v["excludes"].items()))
-}
-
-magic_items = [
-    (i["name"], i.get("rarity", "unknown"))
-    for i in item_table["item"]
-    if i["source"] in system.legal_sources
-    and "$" not in i.get("type", [])
-    and i.get("age") not in system.illegal_ages
-    and i["name"] not in variants_dict.keys()
-]
-
-items_to_rarity = dict(
-    magic_items
-    + [(g["name"], "none") for g in generics]
-    + [(k, v["rarity"]) for k, v in variants_dict.items()]
-)
-
-
 def get_item_rarity(item_name):
+    ensure_loaded()
     if item_name.startswith(SCROLL_OF):
         spell_name = item_name.split(f"{SCROLL_OF} ")[1]
-        spell = spells_by_name.get(spell_name)
+        spell = _spell(spell_name)
         if spell:
             match spell["level"]:
                 case 0 | 1:
@@ -95,13 +177,6 @@ def get_item_rarity(item_name):
 
     return items_to_rarity.get(item_name)
 
-
-all_items = items_to_rarity.keys()
-shoppable_items = [
-    k
-    for (k, v) in items_to_rarity.items()
-    if v in ["common", "uncommon", "rare", "very rare", "legendary"]
-] + [f"{SCROLL_OF} {spell}" for spell in spell_names]
 
 dmg_prices = {
     "common": "50-100",
@@ -141,10 +216,11 @@ def copper_value_to_human_readable(coppers: int):
 
 
 def get_official_price(item_name, is_consumable=False):
+    ensure_loaded()
     base_price = next(
         (
             i["value"]
-            for i in system.base_table["baseitem"] + item_table["item"]
+            for i in dnd.base_table["baseitem"] + item_table["item"]
             if i["name"] == item_name and "value" in i
         ),
         None,
@@ -156,7 +232,7 @@ def get_official_price(item_name, is_consumable=False):
         base_cost = 0
         if item_name.startswith(SCROLL_OF):
             spell_name = item_name.split(f"{SCROLL_OF} ")[1]
-            spell = spells_by_name.get(spell_name)
+            spell = _spell(spell_name)
             if spell:
                 is_consumable = True
                 material_component = spell.get("components", []).get("m", [])
@@ -171,7 +247,7 @@ def get_official_price(item_name, is_consumable=False):
                 base_cost = int(
                     next(
                         i["value"]
-                        for i in system.base_table["baseitem"]
+                        for i in dnd.base_table["baseitem"]
                         if i["name"] == variant["generic"]
                     )
                     / 100
@@ -226,41 +302,50 @@ def format_number(n: str | int | None, denomination="gp", half=False, base_cost=
     return f"{out}{plus} {denomination}"
 
 
+def _spreadsheet_price(item_name: str):
+    """This item's community price, in gp, or None if it has none.
+
+    The list prices magic weapons and armour generically -- "+1 Weapon", not
+    "+1 Scimitar" -- so a variant falls back to its generic entry plus the cost
+    of the mundane item it is built from.
+    """
+    ensure_loaded()
+    if item_name in spreadsheet_items:
+        return spreadsheet_items[item_name]
+
+    variant = variants_dict.get(item_name)
+    if not variant or variant["variant"] not in spreadsheet_items:
+        return None
+    base_value = next(
+        (
+            i["value"]
+            for i in dnd.base_table["baseitem"]
+            if i["name"] == variant["generic"] and "value" in i
+        ),
+        0,
+    )
+    # base values are in copper
+    return spreadsheet_items[variant["variant"]] + int(base_value / 100)
+
+
 def get_item_prices(item_name: str, is_consumable=False):
-    spreadsheet_price = (
-        f"**{format_number(spreadsheet_items[item_name])}**"
-        if item_name in spreadsheet_items
-        else None
-    )
+    price = _spreadsheet_price(item_name)
+    spreadsheet_price = f"**{format_number(price)}**" if price is not None else None
 
-    five_e_price = five_e_magic_shop_lookup(item_name)
-    five_e_price = (
-        format_number(five_e_price[0]["price"]) if len(five_e_price) == 1 else None
-    )
-
-    return spreadsheet_price, five_e_price, get_official_price(item_name, is_consumable)
+    return spreadsheet_price, get_official_price(item_name, is_consumable)
 
 
 def get_item_price_string(item_name: str, consumbable=False):
-    spreadsheet_price, five_e_price, dmg_price = get_item_prices(item_name, consumbable)
+    spreadsheet_price, dmg_price = get_item_prices(item_name, consumbable)
 
-    return f"{spreadsheet_price} / {five_e_price} / {dmg_price}"
-
-
-def five_e_magic_shop_lookup(item_name: str):
-    url = f"https://5emagic.shop/api/item-lookup?search={html.escape(item_name)}"
-    response = httpx.get(url)
-    if response.is_success:
-        return response.json()
-    else:
-        logger.error(f"{response.status_code} {response.reason_phrase} {response.url}")
-        return [{"price": None}]
+    return f"{spreadsheet_price} / {dmg_price}"
 
 
 def process_roll_table_item(i: dict) -> str:
+    ensure_loaded()
     """
 
-    :param i: item from `system.item_table`
+    :param i: item from `dnd.item_table`
     :return: item name
     """
     item_name = "item not found"
@@ -279,7 +364,7 @@ def process_roll_table_item(i: dict) -> str:
             if variant:
                 results = [
                     base_item
-                    for base_item in system.base_table["baseitem"]
+                    for base_item in dnd.base_table["baseitem"]
                     if all(
                         base_item.get(k) != v
                         for (k, v) in variant.get("excludes", {}).items()
@@ -320,11 +405,13 @@ def process_roll_table_item(i: dict) -> str:
         if "Spell Scroll" in item_name:
             lvl = item_name[item_name.index("(") + 1]
             lvl = 0 if lvl == "C" else int(lvl)
-            item_name = f"{SCROLL_OF} {random.choice(spells_by_level[lvl])}"
+            choices = _spells_of_level(lvl)
+            if choices:
+                item_name = f"{SCROLL_OF} {random.choice(choices)}"
     else:
         logger.error(f"{i=}")
 
-    return capitalize_title(system.strip_template(item_name))
+    return capitalize_title(dnd.strip_template(item_name))
 
 
 def variant_lookup(variants, potential_base_items, condition):
@@ -377,6 +464,7 @@ def base_item_lookup(
 
 
 def get_item(item_name: str):
+    ensure_loaded()
     item = (
         next(
             (i for i in item_table["item"] if i["name"].lower() == item_name.lower()),
@@ -385,7 +473,7 @@ def get_item(item_name: str):
         or next(
             (
                 i
-                for i in system.base_table["baseitem"]
+                for i in dnd.base_table["baseitem"]
                 if i["name"].lower() == item_name.lower()
             ),
             None,
@@ -401,31 +489,41 @@ def get_item(item_name: str):
     )
 
     if not item and item_name.startswith(SCROLL_OF):
-        spell_name = item_name.split(f"{SCROLL_OF} ")[1]
-        spell = spells_by_name.get(spell_name)
-        if spell:
-            item = {
-                **spell,
-                "type": "SC",
-                "type_string": f"Spell Scroll ({st_nd_rd_th(spell['level'])} Level)",
-            }
+        # partition, not split: "Scroll of" with nothing after it used to raise
+        # IndexError here.
+        _, _, spell_name = item_name.partition(f"{SCROLL_OF} ")
+        spell = _spell(spell_name) if spell_name else None
+        if not spell:
+            # Unknown spell, or no spell data configured. Both used to fall
+            # through with item still None and raise TypeError below, where the
+            # generic branch returns this instead.
+            return None, "Item not found!"
+        item = {
+            **spell,
+            "type": "SC",
+            "type_string": f"Spell Scroll ({spells.st_nd_rd_th(spell['level'])} Level)",
+        }
     elif not item:
         base_items = [
             i
-            for i in system.base_table["baseitem"]
+            for i in dnd.base_table["baseitem"]
             if i["name"].lower() in item_name.lower()
         ]
         prefs = variant_lookup(
             variant_table["magicvariant"],
             base_items,
-            lambda v: "namePrefix" in v["inherits"]
-            and item_name.startswith(v["inherits"]["namePrefix"]),
+            lambda v: (
+                "namePrefix" in v["inherits"]
+                and item_name.startswith(v["inherits"]["namePrefix"])
+            ),
         )
         suffs = variant_lookup(
             variant_table["magicvariant"],
             base_items,
-            lambda v: "nameSuffix" in v["inherits"]
-            and item_name.endswith(v["inherits"]["nameSuffix"]),
+            lambda v: (
+                "nameSuffix" in v["inherits"]
+                and item_name.endswith(v["inherits"]["nameSuffix"])
+            ),
         )
 
         while True:
@@ -436,15 +534,19 @@ def get_item(item_name: str):
             prefs = variant_lookup(
                 prefs,
                 base_items,
-                lambda v: "namePrefix" in v["inherits"]
-                and item_name.startswith(v["inherits"]["namePrefix"]),
+                lambda v: (
+                    "namePrefix" in v["inherits"]
+                    and item_name.startswith(v["inherits"]["namePrefix"])
+                ),
             )
 
             suffs = variant_lookup(
                 suffs,
                 base_items,
-                lambda v: "nameSuffix" in v["inherits"]
-                and item_name.endswith(v["inherits"]["nameSuffix"]),
+                lambda v: (
+                    "nameSuffix" in v["inherits"]
+                    and item_name.endswith(v["inherits"]["nameSuffix"])
+                ),
             )
 
             if (
@@ -512,15 +614,11 @@ def get_item(item_name: str):
         elif "armor" in category_reqs or not {"HA", "MA"}.isdisjoint(type_reqs):
             item_type = "Armor"
         else:
-            item_type = system.ITEM_TYPE_JSON_TO_ABV[item.get("type")]
+            item_type = dnd.item_type_name(item.get("type"))
 
         item: dict = item["inherits"]
 
-        good = (
-            category_reqs
-            + [system.ITEM_TYPE_JSON_TO_ABV[t] for t in type_reqs]
-            + name_reqs
-        )
+        good = category_reqs + [dnd.item_type_name(t) for t in type_reqs] + name_reqs
         bad = category_excl + name_excl
 
         constraints = (
@@ -552,9 +650,7 @@ def get_item(item_name: str):
             join_list(
                 [
                     item.get("weaponCategory"),
-                    system.ITEM_TYPE_JSON_TO_ABV.get(item.get("type"), "").split(" ")[
-                        0
-                    ],
+                    dnd.item_type_name(item.get("type"), "").split(" ")[0],
                 ],
                 ", ",
             )
@@ -566,9 +662,10 @@ def get_item(item_name: str):
     ):
         item["type_string"] = "Wonderous Item"
     elif "type_string" not in item:
-        item["type_string"] = capitalize_title(
-            system.ITEM_TYPE_JSON_TO_ABV.get(item.get("type"), "???")
-        )
+        # 17 items, mostly from AU, carry no type at all. join_list drops empty
+        # values, so leave it out rather than printing a placeholder.
+        type_name = dnd.item_type_name(item.get("type"))
+        item["type_string"] = capitalize_title(type_name) if type_name else ""
 
     item["rarity"] = (
         item["rarity"]
@@ -580,6 +677,27 @@ def get_item(item_name: str):
     ].startswith("Scroll")
 
     return item, None
+
+
+def _masteries(item: dict) -> list[tuple[str, str]]:
+    """The weapon's mastery properties, as (heading, description) pairs.
+
+    A 2024 concept: the data lists them on the base weapon as "Sap|XPHB", and
+    describes them separately under itemMastery. Older weapons have none.
+    """
+    out = []
+    for entry in item.get("mastery", []):
+        name = dnd.bare_code(entry)
+        described = next(
+            (m for m in dnd.base_table["itemMastery"] if m["name"] == name), None
+        )
+        description = (
+            truncate(dnd.strip_template(join_list(described["entries"], "\n")), 1024)
+            if described
+            else ""
+        )
+        out.append((f"Mastery: {name}", description or name))
+    return out
 
 
 def generate_item_embed(item_name):
@@ -595,7 +713,11 @@ def generate_item_embed(item_name):
             [
                 item["type_string"],
                 item["rarity"].capitalize(),
-                *[properties[p] for p in item.get("property", []) if p in properties],
+                *[
+                    properties[code]
+                    for code in map(dnd.bare_code, item.get("property", []))
+                    if code in properties
+                ],
             ],
             ", ",
         )
@@ -635,13 +757,16 @@ def generate_item_embed(item_name):
             f"({join_list([item.get('dmg2'), item.get('bonusWeapon')], '')})"
             if "dmg2" in item
             else None,
-            system.DMGTYPE_JSON_TO_FULL.get(item.get("dmgType")),
+            dnd.DMGTYPE_JSON_TO_FULL.get(item.get("dmgType")),
         ],
         " ",
     )
 
     if damage_string:
         embed.add_field(name="", value=damage_string)
+
+    for mastery in _masteries(item):
+        embed.add_field(name=mastery[0], value=mastery[1], inline=False)
 
     if "reqAttune" in item:
         embed.add_field(
@@ -651,14 +776,14 @@ def generate_item_embed(item_name):
                     "Requires Attunement",
                     None
                     if item["reqAttune"] is True
-                    else system.capitalize_title(item["reqAttune"]),
+                    else dnd.capitalize_title(item["reqAttune"]),
                 ],
                 " ",
             ),
         )
 
     if item.get("entries"):
-        for n, v, i in system.handle_description_entries(item, item["entries"]):
+        for n, v, i in dnd.handle_description_entries(item, item["entries"]):
             embed.add_field(name=n, value=v, inline=i)
 
     if "entries" not in item and item["type_string"].startswith("Weapon"):

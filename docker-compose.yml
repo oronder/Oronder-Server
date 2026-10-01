@@ -1,6 +1,6 @@
 services:
   oronder:
-    image: ghcr.io/oronder/oronder:latest
+    image: ghcr.io/chunklighttuna/oronder:latest
     pull_policy: always
     command: uvicorn main:app --proxy-headers --host 0.0.0.0 --port ${UVICORN_PORT}
     hostname: oronder
@@ -9,9 +9,26 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     ports:
-      - "${UVICORN_PORT}:${UVICORN_PORT}"
+      # Loopback by default: a reverse proxy on the host (Caddy in production)
+      # terminates TLS and forwards here. Publishing on every interface let
+      # anyone skip it -- plain HTTP, and around the proxy's auth on /docs.
+      - "${PUBLISH_ADDRESS:-127.0.0.1}:${UVICORN_PORT}:${UVICORN_PORT}"
     depends_on:
       - oronder-db
+    healthcheck:
+      # Consumed by deploy/rollback-guard.sh, which rolls the container back to
+      # the last known good image if a watchtower deploy comes up unhealthy.
+      # /health checks the Discord gateway as well as HTTP; the heartbeat route
+      # alone stayed 200 through an 11-hour gateway outage.
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:${UVICORN_PORT}/health || exit 1" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Startup can legitimately take minutes: if Discord rate limits the
+      # gateway, the client reconnects on a 60s loop before the app serves.
+      # Failures inside start_period never mark the container unhealthy.
+      start_period: 15m
+      start_interval: 10s
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - DISCORD_TOKEN=${DISCORD_TOKEN}
@@ -22,7 +39,22 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
       - GITHUB_UPTIME_PAT=${GITHUB_UPTIME_PAT}
       - GITHUB_UPTIME_URL=${GITHUB_UPTIME_URL}
+      - DND5E_DATA_SOURCE=${DND5E_DATA_SOURCE:-}
+      - DND5E_ALLOWED_SOURCES=${DND5E_ALLOWED_SOURCES:-}
+      - DND5E_ALLOWED_CLASSES=${DND5E_ALLOWED_CLASSES:-}
+      - DND5E_DISALLOWED_AGES=${DND5E_DISALLOWED_AGES:-}
+      - UPDATE_DISCORD_KEY=${UPDATE_DISCORD_KEY}
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
       - TZ=UTC
+      - HOME_GUILD_ID=${HOME_GUILD_ID}
+      - SUPPORTER_ROLE_ID=${SUPPORTER_ROLE_ID}
+      - BETA_TESTER_ROLE_ID=${BETA_TESTER_ROLE_ID}
+      - SUBSCRIPTION_EXEMPT_USER_IDS=${SUBSCRIPTION_EXEMPT_USER_IDS}
+      - SUPER_ADMIN_USER_IDS=${SUPER_ADMIN_USER_IDS}
+      - SUPER_ADMIN_GUILD_IDS=${SUPER_ADMIN_GUILD_IDS}
+      - DEBUG_DM_USER_IDS=${DEBUG_DM_USER_IDS}
+      - CHANGELOG_CHANNEL_ID=${CHANGELOG_CHANNEL_ID}
+      - WIKIJS_GUILD_IDS=${WIKIJS_GUILD_IDS}
 
   oronder-db:
     image: postgres:17-alpine
@@ -34,9 +66,9 @@ services:
     expose:
       - 5432
     environment:
-      - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
       - TZ=UTC
       - PGTZ=UTC
     healthcheck:
@@ -46,7 +78,7 @@ services:
       retries: 5
 
   oronder-backup:
-    image: ghcr.io/oronder/oronder-backup:latest
+    image: ghcr.io/chunklighttuna/oronder-backup:latest
     hostname: oronder-backup
     container_name: oronder-backup
     restart: unless-stopped
@@ -60,13 +92,17 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - B2_APPLICATION_KEY_ID=${B2_APPLICATION_KEY_ID}
       - B2_APPLICATION_KEY=${B2_APPLICATION_KEY}
+      - B2_BUCKET=${B2_BUCKET}
+      - B2_NOTIFICATION_WEBHOOK=${B2_NOTIFICATION_WEBHOOK}
 
   watchtower:
-    image: containrrr/watchtower:latest
+    # containrrr/watchtower is unmaintained and incompatible with Docker 29+; nickfedor fork is a drop-in
+    image: nickfedor/watchtower:latest
     container_name: watchtower
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./watchtower-config.json:/config.json:ro
     command: --interval 300 --cleanup --include-restarting --label-enable
 
 volumes:

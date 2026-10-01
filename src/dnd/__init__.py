@@ -2,8 +2,8 @@ import json
 import os
 import pprint
 import re
-import time
-from urllib import parse
+import urllib.parse
+from functools import cache
 from math import floor, ceil  # noqa: F401
 from pathlib import Path
 
@@ -14,128 +14,183 @@ from typing import Optional
 
 logger = getLogger(__name__)
 
-json_data_url = os.getenv("JSON_DATA_URL")
-ENABLED = bool(json_data_url)
+# Base URL serving the 5e JSON data this bot reads (items, spells, rules,
+# ...). Anything already cached in ./data is used first, so an instance
+# that ships its own data needs no URL at all. When neither is available the
+# commands that need that data are simply not registered -- see the callers of
+# DataUnavailable -- rather than taking the whole bot down with them.
+DND5E_DATA_SOURCE = os.environ.get("DND5E_DATA_SOURCE", "").strip()
+
+DATA_DIR = Path.cwd() / "data"
 
 
-class Stub:
-    counter = 0
-    last_hit = time.time()
-
-    def _raise_on_recur(self):
-        self.counter += 1
-        cur = time.time()
-        if self.last_hit + 60 < cur:
-            self.counter = 0
-            self.last_hit = cur
-        elif self.counter > 200:
-            self.counter = 0
-            raise Exception("Dummy!")
-
-    def __getitem__(self, key):
-        logger.warning(f"__getitem__ {key=}")
-        self._raise_on_recur()
-        return self
-
-    def __setitem__(self, key, value):
-        logger.warning(f"__setitem__ {key=} {value=}")
-        self._raise_on_recur()
-        pass
-
-    def __eq__(self, other):
-        logger.warning(f"__eq__ {other=}")
-        self._raise_on_recur()
-        return False
-
-    def get(self, key):
-        logger.warning(f"get {key=}")
-        self._raise_on_recur()
-        return self
-
-    def __contains__(self, item):
-        logger.warning(f"__contains__ {item=} ")
-        self._raise_on_recur()
-        return False
-
-    def __hash__(self):
-        logger.warning("hash")
-        self._raise_on_recur()
-        return hash(id(self))
-
-    def __iter__(self):
-        logger.warning("__iter__")
-        self._raise_on_recur()
-        return iter([])
-
-    def __getattr__(self, key):
-        logger.warning(f"__getattr__ {key=}")
-        self._raise_on_recur()
-        return self
-
-    def __call__(self, *args, **kwargs):
-        logger.warning(f"__call__ {args=} {kwargs=}")
-        self._raise_on_recur()
-        return self
-
-
-stub = Stub()
+class DataUnavailable(RuntimeError):
+    """A 5e dataset is neither cached locally nor fetchable."""
 
 
 def load_json(key):
-    if not ENABLED:
-        return stub
     file = f"{key}.json"
-    data_dir = Path.cwd() / "data" / file
-    data_dir.parent.mkdir(parents=True, exist_ok=True)
+    path = DATA_DIR / file
 
-    if data_dir.is_file():
+    if path.is_file():
         logger.info(f"{file} found.")
-        with data_dir.open(encoding="utf-8") as f:
+        with path.open(encoding="utf-8") as f:
             return json.load(f)
-    else:
-        response = httpx.get(parse.urljoin(json_data_url, f"/data/{file}"))
-        assert response.is_success
-        logger.info(f"{file} downloaded.")
-        with open(data_dir, "wb") as f:
-            f.write(response.content)
-        return json.loads(response.content)
+
+    if not DND5E_DATA_SOURCE:
+        raise DataUnavailable(
+            f"{file} is not cached in {DATA_DIR} and DND5E_DATA_SOURCE is not set."
+        )
+
+    response = httpx.get(urllib.parse.urljoin(DND5E_DATA_SOURCE, file))
+    if not response.is_success:
+        raise DataUnavailable(
+            f"{file} could not be fetched from {DND5E_DATA_SOURCE}: "
+            f"HTTP {response.status_code}"
+        )
+    logger.info(f"{file} downloaded.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(response.content)
+    return json.loads(response.content)
 
 
-legal_sources = {
-    "FTD",
-    "TCE",
-    "PHB",
-    "XGE",
-    "DMG",
-    "BGG",
-    "BMT",
-    "COA",
-    "EGW",
-    "GoS",
-    "VRGR",
-}
-legal_classes = {
-    "Artificer",
-    "Bard",
-    "Cleric",
-    "Druid",
-    "Monk",
-    "Paladin",
-    "Ranger",
-    "Sorcerer",
-    "Warlock",
-    "Wizard",
-}
+def _env_set(name: str, default: frozenset[str]) -> frozenset[str]:
+    """A comma-separated environment variable as a set, or `default` if unset.
 
-illegal_ages = {"futuristic", "renaissance", "modern"}
+    Values are taken verbatim: they are matched against the codes in the data
+    ("PHB", "GoS", "futuristic"), so case matters.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    return frozenset(v.strip() for v in raw.split(",") if v.strip())
 
-base_table = load_json("items-base")
 
-base_table["baseitem"] = [
-    i
-    for i in base_table["baseitem"]
-    if i["source"] in legal_sources and i.get("age") not in illegal_ages
-]
+def _env_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Like `_env_set`, but keeps the order given and drops repeats.
+
+    For settings where order decides precedence rather than just membership.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    return tuple(dict.fromkeys(v.strip() for v in raw.split(",") if v.strip()))
+
+
+# The same book in its 2014 and 2024 printings, which carry different codes in
+# the data. They are alternatives, not additions: an instance runs one edition
+# or the other, so listing both is a configuration mistake.
+EDITIONS = {"PHB": "XPHB", "DMG": "XDMG", "MM": "XMM"}
+
+
+def _resolve_editions(sources: tuple[str, ...]) -> tuple[str, ...]:
+    """Drop any 2014 code whose 2024 counterpart is also listed."""
+    resolved = []
+    for source in sources:
+        newer = EDITIONS.get(source)
+        if newer and newer in sources:
+            logger.error(
+                f"{source} and {newer} are the same book in different editions; "
+                f"ignoring {source}"
+            )
+            continue
+        resolved.append(source)
+    return tuple(resolved)
+
+
+# Which sourcebooks, classes and item ages this instance surfaces. Every
+# dataset is filtered through these, so narrowing them hides content and
+# widening them reveals whatever the configured data source happens to carry.
+#
+# Ordered oldest to newest, because order is precedence: where two books print
+# the same spell, the later one wins. Listing a book later prefers its version.
+#
+# The default is the 2024 core rules. Swap XPHB/XDMG for PHB/DMG to run 2014
+# instead -- not alongside, see EDITIONS.
+allowed_sources = _resolve_editions(
+    _env_tuple(
+        "DND5E_ALLOWED_SOURCES",
+        (
+            "XGE",  # 2017-11-21  Xanathar's Guide to Everything
+            "GoS",  # 2019-05-21  Ghosts of Saltmarsh
+            "EGW",  # 2020-03-17  Explorer's Guide to Wildemount
+            "TCE",  # 2020-11-17  Tasha's Cauldron of Everything
+            "VRGR",  # 2021-05-18  Van Richten's Guide to Ravenloft
+            "FTD",  # 2021-10-26  Fizban's Treasury of Dragons
+            "BGG",  # 2023-08-15  Bigby Presents: Glory of the Giants
+            "CoA",  # 2023-10-30  Chains of Asmodeus
+            "BMT",  # 2023-11-14  The Book of Many Things
+            "XPHB",  # 2024-09-17  Player's Handbook (2024)
+            "XDMG",  # 2024-11-12  Dungeon Master's Guide (2024)
+            "FRHoF",  # 2025-11-11  Forgotten Realms: Heroes of Faerun
+            "LFL",  # 2025-11-18  Lorwyn: First Light
+            "EFA",  # 2025-12-09  Eberron: Forge of the Artificer
+            "RHW",  # 2026-06-16  Ravenloft: The Horrors Within
+            "AU",  # 2026-09-15  Arcana Unleashed
+        ),
+    )
+)
+
+allowed_classes = _env_set(
+    "DND5E_ALLOWED_CLASSES",
+    frozenset(
+        {
+            "Artificer",
+            "Bard",
+            "Cleric",
+            "Druid",
+            "Monk",
+            "Paladin",
+            "Ranger",
+            "Sorcerer",
+            "Warlock",
+            "Wizard",
+        }
+    ),
+)
+disallowed_ages = _env_set(
+    "DND5E_DISALLOWED_AGES", frozenset({"futuristic", "renaissance", "modern"})
+)
+
+
+@cache
+def _base_table():
+    table = load_json("items-base")
+    table["baseitem"] = [
+        i
+        for i in table["baseitem"]
+        if i["source"] in allowed_sources and i.get("age") not in disallowed_ages
+    ]
+    return table
+
+
+def ensure_loaded():
+    """Load this module's data, raising DataUnavailable if it cannot be read."""
+    _base_table()
+
+
+def available(*modules) -> bool:
+    """Whether every given dnd module can read its data.
+
+    Used to decide which commands to register: a bot with no data source
+    configured still runs, it just does not offer the commands that would
+    need one.
+    """
+    for module in modules:
+        try:
+            module.ensure_loaded()
+        except DataUnavailable as e:
+            logger.warning(f"5e data unavailable: {e}")
+            return False
+    return True
+
+
+def __getattr__(name):
+    """Resolve `dnd.base_table` on first access instead of at import."""
+    if name == "base_table":
+        return _base_table()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def evaluate_and_replace_parentheses(expression: str):
@@ -146,7 +201,7 @@ def evaluate_and_replace_parentheses(expression: str):
     )
 
 
-def cleanse_damage_roll(dmg: str):
+def clense_damage_roll(dmg: str):
     terms = ["floor", "ceil"]
     out = re.sub(r"\[\w+]", "", dmg)
     while any(term in out for term in terms):
@@ -194,7 +249,11 @@ def handle_description_entries(
                 pattern=r"\{#itemEntry ([^{}]+)}",
                 repl=lambda m: join_list(
                     next(
-                        (i for i in base_table["itemEntry"] if i["name"] == m.group(1)),
+                        (
+                            i
+                            for i in _base_table()["itemEntry"]
+                            if i["name"] == m.group(1)
+                        ),
                         {},
                     ).get("entriesTemplate", []),
                     "\n",
@@ -202,6 +261,7 @@ def handle_description_entries(
                 string=e,
             )
 
+            # TODO how does this bit work??
             template_double_curly = re.sub(
                 pattern=r"\{\{item.([^{}]+)}}",
                 repl=lambda m: join_list(entity.get(m.group(1)), " ", " and "),
@@ -271,9 +331,25 @@ def strip_template(description):
 
     # Keep searching for "{@...}" occurrences until there are no more matches.
     while re.search(pattern, description):
-        description = re.sub(pattern, repl, description, 1)
+        description = re.sub(pattern, repl, description, count=1)
 
     return description
+
+
+def bare_code(value) -> str:
+    """A data code without its book suffix.
+
+    2024 data writes these as "G|XPHB" or {"uid": "2H|XPHB", "note": ...}
+    where the older data wrote plain "G" and "2H".
+    """
+    if isinstance(value, dict):
+        value = value.get("uid", "")
+    return str(value or "").split("|")[0]
+
+
+def item_type_name(type_code, default=None):
+    """The readable name of an item type code, suffixed or not."""
+    return ITEM_TYPE_JSON_TO_ABV.get(bare_code(type_code), default)
 
 
 ITEM_TYPE_JSON_TO_ABV = {
@@ -305,6 +381,10 @@ ITEM_TYPE_JSON_TO_ABV = {
     "TAH": "tack and harness",
     "TG": "trade good",
     "$": "treasure",
+    "$A": "art object",
+    "$C": "coinage",
+    "$G": "gemstone",
+    "TB": "trade bar",
     "VEH": "vehicle (land)",
     "SHP": "vehicle (water)",
     "AIR": "vehicle (air)",
@@ -426,8 +506,8 @@ def abreviate_stat_name(wide: str):
 
 def mod_to_str(mod: int):
     if not mod:
-        return '0'
+        return "0"
     elif mod < 0:
         return str(mod)
     else:
-        return f'+{mod}'
+        return f"+{mod}"

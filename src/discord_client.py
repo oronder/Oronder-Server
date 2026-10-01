@@ -25,11 +25,18 @@ from groups.autocomplete import (
     action_autocomplete,
     attack_mode_autocomplete,
 )
+import dnd
+import dnd.rules
 from groups.top_level import r, roll_attack, roll, action
 from models.socket_aware_bot import SocketAwareBot
 from routers.socket_io import sio
 from routers.socket_namespace import SocketNamespace
-from utils import oronder_bot_prod, getLogger, run_uptime_monitor
+from utils import (
+    HOME_GUILD_ID,
+    getLogger,
+    run_uptime_monitor,
+    ensure_members,
+)
 
 logger = getLogger(__name__)
 token = os.environ["DISCORD_TOKEN"]
@@ -45,10 +52,21 @@ intents.guild_polls = True
 intents.guild_messages = True
 # intents.message_content = True
 
-bot = SocketAwareBot(intents=intents)
+# Members are loaded per guild on first use (utils.ensure_members), not all at
+# startup -- which held on_ready for ~6 minutes per deploy.
+bot = SocketAwareBot(intents=intents, chunk_guilds_at_startup=False)
 
 
 async def start():
+    # py-cord binds its event loop when the Bot is constructed -- here, at
+    # import -- and only rebinds in `async with bot:`, which bot.start() skips.
+    # Since uvicorn 0.4x the app is imported before uvicorn's loop exists, so
+    # the bot kept a loop nothing runs: every py-cord future (wait_for, member
+    # chunking, heartbeats) raised "attached to a different loop". Bind it to
+    # the loop we are actually running on, as __aenter__ would.
+    loop = asyncio.get_running_loop()
+    bot.loop = bot.http.loop = bot._connection.loop = loop
+
     for cog in [gm, events, downtime, game, tasks, lookups, admin, campaign]:
         cog.setup(bot)
         await asyncio.sleep(1)
@@ -65,9 +83,13 @@ async def stop():
 @bot.event
 async def on_ready():
     logger.critical("Bot Ready")
+    # The home server's member list backs invite_link and the subscription
+    # role checks, so load it up front. It is one guild, not hundreds.
+    if HOME_GUILD_ID:
+        await ensure_members(bot.get_guild(HOME_GUILD_ID))
     sio.register_namespace(SocketNamespace(bot, "/"))
 
-    if bot.application_id == oronder_bot_prod:
+    if os.getenv("GITHUB_UPTIME_PAT") and os.getenv("GITHUB_UPTIME_URL"):
         await run_uptime_monitor()
 
 
@@ -178,3 +200,13 @@ async def command_action(
     display_description: bool,
 ):
     await action(ctx, actor_name, action_type, comment, display_description)
+
+
+# /action describes the action it declares, which comes from the 5e data. With
+# no data source configured it is withdrawn rather than left to fail on use.
+if not dnd.available(dnd.rules):
+    bot.remove_application_command(command_action)
+    logger.warning(
+        "5e data unavailable, not registering /action"
+        " -- set DND5E_DATA_SOURCE or populate ./data to enable it."
+    )

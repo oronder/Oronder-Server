@@ -9,12 +9,12 @@ from discord.commands import option
 from discord.ext.commands import Bot
 from sqlalchemy import select
 
-import system
 from database import DowntimeTable, Session
 from database.guild_settings_table import GuildSettingsTable
-from system import SKILLS, TOOLS, cleanse_damage_roll, ABILITIES, items
-from system.items import get_item_price_string, get_item, format_number, get_item_rarity
-from groups import character_description, get_actor, invite_link
+import dnd
+from dnd import SKILLS, TOOLS, clense_damage_roll, ABILITIES, items
+from dnd.items import get_item_price_string, get_item, format_number, get_item_rarity
+from groups import character_description, drop_subcommands, get_actor, invite_link
 from groups.autocomplete import actor_autocomplete, search
 from models import DowntimeModel
 from models.actor import Actor
@@ -74,60 +74,58 @@ class Downtime(discord.Cog):
 
         return guild_settings, *get_actor(character, ctx.user.id, ctx.guild_id)
 
-    if system.ENABLED:
-
-        @downtime_group.command(
-            name="buy", description="Convenience command for Buying a Magic Item."
-        )
-        @option(
-            "character",
-            description=character_description,
-            autocomplete=actor_autocomplete,
-        )
-        @option(
-            "item",
-            description="Item to Buy",
-            autocomplete=lambda ctx: search(ctx.value, items.shoppable_items, sorted),
-        )
-        @option(
-            "extra_weeks",
-            default=0,
-            description="+1 for every extra week spent",
-            min_value=0,
-            max_value=10,
-        )
-        @option(
-            "extra_gold",
-            default=0,
-            description="+1 for every 100 gold spent spent",
-            choices=list(range(0, 1100, 100)),
-        )
-        async def command_downtime_buy(
-            self,
-            ctx: discord.ApplicationContext,
-            character: str,
-            extra_weeks: int,
-            extra_gold: int,
-            item: str,
-        ):
-            guild_settings, actor, error = self.common(character, ctx)
-            if error:
-                await ctx.respond(**error)
-                return
-            if not item:
-                await ctx.respond(f"`{item}` not found!", ephemeral=True)
-                return
-
-            situational_bonus = extra_weeks + int(extra_gold / 100)
-            if situational_bonus > 10:
-                ctx.respond(
-                    **logger.err_msg(
-                        "Bonuses from extra gold and time spent cannot exceed 10.",
-                        ctx.guild_id,
-                    )
+    @downtime_group.command(
+        name="buy", description="Convenience command for Buying a Magic Item."
+    )
+    @option(
+        "character", description=character_description, autocomplete=actor_autocomplete
+    )
+    @option(
+        "item",
+        required=False,
+        description="Item to Buy",
+        autocomplete=lambda ctx: search(ctx.value, items.shoppable_items, sorted),
+    )
+    @option(
+        "extra_weeks",
+        default=0,
+        description="+1 for every extra week spent",
+        min_value=0,
+        max_value=10,
+    )
+    @option(
+        "extra_gold",
+        default=0,
+        description="+1 for every 100 gold spent spent",
+        choices=list(range(0, 1100, 100)),
+    )
+    async def command_downtime_buy(
+        self,
+        ctx: discord.ApplicationContext,
+        character: str,
+        extra_weeks: int,
+        extra_gold: int,
+        item: str,
+    ):
+        guild_settings, actor, error = self.common(character, ctx)
+        if error:
+            await ctx.respond(**error)
+            return
+        situational_bonus = extra_weeks + int(extra_gold / 100)
+        if situational_bonus > 10:
+            ctx.respond(
+                **logger.err_msg(
+                    "Bonuses from extra gold and time spent cannot exceed 10.",
+                    ctx.guild_id,
                 )
+            )
 
-            roll = actor.roll("per", situational_bonus=situational_bonus)
+        roll = actor.roll("per", situational_bonus=situational_bonus)
+
+        if not item:
+            roll_string = str(roll)
+            price_string = None
+        else:
             dc_lookup = {
                 "common": 10,
                 "uncommon": 15,
@@ -149,23 +147,23 @@ class Downtime(discord.Cog):
                 roll_string = f"{str(roll)} < DC **{dc}**"
                 price_string = f"Failed DC for {item}!"
 
-            embed = Embed(title=f"{actor.name} goes Shopping!")
-            embed.set_thumbnail(url=actor.portrait_url)
-            embed.add_field(name="Persuasion", value=roll_string)
-            embed.add_field(
-                name="Downtime Duration",
-                value=f"{1 + extra_weeks} week{'s' if extra_weeks else ''}",
-            )
-            embed.add_field(name="Search Cost", value=f"`{str(100 + extra_gold)} gp`")
-
+        embed = Embed(title=f"{actor.name} goes Shopping!")
+        embed.set_thumbnail(url=actor.portrait_url)
+        embed.add_field(name="Persuasion", value=roll_string)
+        embed.add_field(
+            name="Downtime Duration",
+            value=f"{1 + extra_weeks} week{'s' if extra_weeks else ''}",
+        )
+        embed.add_field(name="Search Cost", value=f"`{str(100 + extra_gold)} gp`")
+        if item:
             embed.add_field(
                 name=f"**{item}**" if success else "", value=price_string, inline=False
             )
 
-            await ctx.respond(
-                view=DowntimeBuyView(roll.total, bool(item) and success, ctx.user.id),
-                embed=embed,
-            )
+        await ctx.respond(
+            view=DowntimeBuyView(roll.total, bool(item) and success, ctx.user.id),
+            embed=embed,
+        )
 
     @downtime_group.command(
         name="pitfight", description="Convenience command for Pit Fighting."
@@ -199,7 +197,7 @@ class Downtime(discord.Cog):
         }
         best_weapon = actor.best_weapon()
         if best_weapon:
-            best_weapon_attack = cleanse_damage_roll(best_weapon.attack)
+            best_weapon_attack = clense_damage_roll(best_weapon.attack)
             stats_to_rolls["Attack"] = DowntimeRoll(
                 roll=lambda: d20.roll(best_weapon_attack),
                 dc_fun=lambda: d20.roll("5+2d10"),
@@ -262,7 +260,15 @@ class Downtime(discord.Cog):
         embed.set_thumbnail(url=actor.portrait_url)
 
         def wins_to_outcome(win_count: int) -> str:
-            reward = {10: 50, 150: 100, 20: 200, 25: 1000}[dc]
+            match dc:
+                case 10:
+                    reward = 50
+                case 15:
+                    reward = 100
+                case 20:
+                    reward = 200
+                case _:
+                    reward = 1000
 
             match win_count:
                 case 0:
@@ -336,4 +342,13 @@ class Downtime(discord.Cog):
 
 def setup(bot: Bot):
     logger.critical("Loading")
+    # /downtime buy prices items from the 5e data; the rest of the group does
+    # not need it, so only that one is withheld.
+    buyable = dnd.available(items)
     bot.add_cog(Downtime(bot))
+    if not buyable:
+        drop_subcommands(bot, "downtime", {"buy"})
+        logger.warning(
+            "5e data unavailable, not registering /downtime buy"
+            " -- set DND5E_DATA_SOURCE or populate ./data to enable it."
+        )

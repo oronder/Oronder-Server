@@ -1,3 +1,4 @@
+import asyncio
 import textwrap
 from dataclasses import dataclass
 from typing import List, Optional
@@ -21,7 +22,13 @@ from groups import get_actors, foundry_module_link
 from models.actor import Actor
 from models.missions import Mission
 from models.socket_aware_bot import SocketAwareBot
-from utils import beta_tester_role_id, getLogger, oronder_server_id, supporter_role_id
+from utils import (
+    BETA_TESTER_ROLE_ID,
+    HOME_GUILD_ID,
+    SUPPORTER_ROLE_ID,
+    ensure_members,
+    getLogger,
+)
 from views.events import CharacterSelectView
 
 logger = getLogger(__name__)
@@ -35,6 +42,9 @@ class ScheduledEventContext:
     scheduled_event: ScheduledEvent
 
 
+GUILD_REMOVE_GRACE_SECONDS = 600
+
+
 class Events(Cog):
     def __init__(self, bot: SocketAwareBot):
         self.bot = bot
@@ -44,6 +54,17 @@ class Events(Cog):
 
     @Cog.listener()
     async def on_guild_remove(self, guild: Guild):
+        # Re-authorizing the app -- "Connect to Discord" / Re-Init in the Foundry
+        # module -- makes Discord remove and re-add the bot, ~24s apart. Deleting
+        # immediately wiped a guild's actors, campaign, downtime and missions on
+        # every re-pair. Wait, and delete only if the bot was not re-added.
+        #
+        # If the process restarts during the wait, the delete never runs and the
+        # data is kept. That is the safe direction to fail in.
+        await asyncio.sleep(GUILD_REMOVE_GRACE_SECONDS)
+        if self.bot.get_guild(guild.id) is not None:
+            logger.info(f"{guild.id}: rejoined within grace period, keeping data")
+            return
         delete_guild(guild)
 
     @Cog.listener()
@@ -52,25 +73,14 @@ class Events(Cog):
 
     @Cog.listener()
     async def on_member_update(self, before: Member, after: Member):
-        if after.guild.id != oronder_server_id:
+        if HOME_GUILD_ID is None or after.guild.id != HOME_GUILD_ID:
             return
 
-        if (
-            (
-                beta_tester_role_id not in before.roles
-                and beta_tester_role_id in after.roles
-            )
-            or (
-                beta_tester_role_id in before.roles
-                and beta_tester_role_id not in after.roles
-            )
-        ) or (
-            (supporter_role_id not in before.roles and supporter_role_id in after.roles)
-            or (
-                supporter_role_id in before.roles
-                and supporter_role_id not in after.roles
-            )
-        ):
+        # Compare role ids. member.roles holds Role objects, and an int never
+        # equals one, so the old `role_id in member.roles` checks never fired.
+        watched = {r for r in (BETA_TESTER_ROLE_ID, SUPPORTER_ROLE_ID) if r}
+        changed = {r.id for r in before.roles} ^ {r.id for r in after.roles}
+        if changed & watched:
             for guild in [g for g in self.bot.guilds if g.owner_id == after.id]:
                 GuildSettingsTable.update_subscription(self.bot, guild)
 
@@ -122,6 +132,7 @@ class Events(Cog):
             logger.warning(f"{event_subscription=}")
             return
 
+        await ensure_members(event_subscription.guild if event_subscription else None)
         sec: ScheduledEventContext = self.event_to_actors(event_subscription)
         if sec:
             a_ids = [a.id for a in sec.actors]
@@ -168,6 +179,7 @@ class Events(Cog):
     ):
         if not event_subscription:
             logger.warning(f"{event_subscription=}")
+        await ensure_members(event_subscription.guild if event_subscription else None)
         sec: ScheduledEventContext = self.event_to_actors(event_subscription)
         if sec:
             a_ids = [a.id for a in sec.actors]

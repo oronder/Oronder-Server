@@ -1,25 +1,50 @@
+from functools import cache
+
 from discord import Embed
 
-import system
+import dnd
 from utils import getLogger, join_list
 
 logger = getLogger(__name__)
 
-quick_rules = system.load_json("generated/bookref-quick")
 
-sage_advice_compendium = {
-    k["name"]: k["entries"]
-    for i in system.load_json("book/book-sac")["data"][0]["entries"][2]["entries"][2:]
-    for j in i["entries"]
-    for k in j["entries"]
-}
-actions = {action["name"]: action for action in system.load_json("actions")["action"]}
+@cache
+def ensure_loaded():
+    """Load the 5e data this module exposes. Called on first use, not at
+    import, so importing it for lvl_to_xp/get_lvl, which are plain tables never needs the data.
+    """
+    global quick_rules, sage_advice_compendium, actions, senses, conditions
 
-senses = system.load_json("senses")["sense"]
-conditions = system.load_json("conditionsdiseases")
+    quick_rules = dnd.load_json("generated/bookref-quick")
+
+    sage_advice_compendium = {
+        k["name"]: k["entries"]
+        for i in dnd.load_json("book/book-sac")["data"][0]["entries"][2]["entries"][2:]
+        for j in i["entries"]
+        for k in j["entries"]
+    }
+    actions = {action["name"]: action for action in dnd.load_json("actions")["action"]}
+
+    senses = dnd.load_json("senses")["sense"]
+    conditions = dnd.load_json("conditionsdiseases")
+
+
+def __getattr__(name):
+    """Load on first attribute access instead of at import."""
+    if name in {
+        "quick_rules",
+        "sage_advice_compendium",
+        "actions",
+        "senses",
+        "conditions",
+    }:
+        ensure_loaded()
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def generate_rule_embed(rule: str):
+    ensure_loaded()
     rule = rule.rstrip("...")
 
     title = None
@@ -27,23 +52,23 @@ def generate_rule_embed(rule: str):
     footer = None
     if rule.startswith("SAC: "):
         title, ruling = next(
-            (system.strip_template(k), v)
+            (dnd.strip_template(k), v)
             for (k, v) in sage_advice_compendium.items()
-            if system.strip_template(k).startswith(rule[len("SAC: ") :])
+            if dnd.strip_template(k).startswith(rule[len("SAC: ") :])
         )
-        fields = system.handle_description_entries(None, ruling, name="")
+        fields = dnd.handle_description_entries(None, ruling, name="")
         footer = "Sage Advice Compendium"
 
     elif rule.startswith("Property: "):
         prop = next(
             j
-            for i in system.base_table["itemProperty"]
+            for i in dnd.base_table["itemProperty"]
             if "entries" in i
             for j in i["entries"]
             if j["name"] == rule[len("Property: ") :]
         )
         title = prop["name"]
-        fields = system.handle_description_entries(None, prop["entries"], name="")
+        fields = dnd.handle_description_entries(None, prop["entries"], name="")
         footer = "Property"
 
     elif rule.startswith("Action: "):
@@ -52,32 +77,34 @@ def generate_rule_embed(rule: str):
         times = [
             t
             if isinstance(t, str)
-            else system.capitalize_title(
+            else dnd.capitalize_title(
                 f"{t['number']} {t['unit'].replace('bonus', 'bonus action')}"
             )
             for t in description.get("time", ["—"])
         ]
         fields = [
             ("Time", join_list(times, "/"), False),
-            *system.handle_description_entries(
+            *dnd.handle_description_entries(
                 None, description["entries"], name="Description"
             ),
         ]
-        footer = f"Action | {description['source']} {description['page']}"
+        footer = (
+            f"Action | {description['source']} {description.get('page', '')}".rstrip()
+        )
 
     elif rule.startswith("Sense: "):
         sense = next(s for s in senses if s["name"] == rule[len("Sense: ") :])
         title = sense["name"]
-        fields = system.handle_description_entries(None, sense["entries"], name="")
-        footer = f"Sense | {sense['source']} {sense['page']}"
+        fields = dnd.handle_description_entries(None, sense["entries"], name="")
+        footer = f"Sense | {sense['source']} {sense.get('page', '')}".rstrip()
 
     elif any(rule.startswith(a) for a in {"Condition: ", "Status: ", "Disease: "}):
         key_left = rule.split(": ")[0].lower()
         key_right = rule.split(": ")[-1]
         condition = next(s for s in conditions[key_left] if s["name"] == key_right)
         title = condition["name"]
-        fields = system.handle_description_entries(None, condition["entries"], name="")
-        footer = f"Sense | {condition['source']} {condition['page']}"
+        fields = dnd.handle_description_entries(None, condition["entries"], name="")
+        footer = f"Sense | {condition['source']} {condition.get('page', '')}".rstrip()
 
     elif rule.startswith("Movement: "):
         move = next(
@@ -89,8 +116,8 @@ def generate_rule_embed(rule: str):
             if isinstance(m, dict) and m["name"] == rule[len("Movement: ") :]
         )
         title = move["name"]
-        fields = system.handle_description_entries(None, move["entries"], name="")
-        footer = f"Sense | {move['source']} {move['page']}"
+        fields = dnd.handle_description_entries(None, move["entries"], name="")
+        footer = f"Sense | {move['source']} {move.get('page', '')}".rstrip()
 
     if not title or not len(fields) or not footer:
         return logger.err_msg(f"Rule {rule} not found.")

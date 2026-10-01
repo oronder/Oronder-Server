@@ -1,3 +1,4 @@
+import os
 import secrets
 
 from discord import Bot
@@ -11,7 +12,6 @@ from utils import getLogger
 
 logger = getLogger(__name__)
 router = APIRouter(prefix="/admin")
-key = "6YvBnmaLk7lvsawEGz8hVG8Cru_ZAmFPALaJxeYrz4g"
 
 
 async def get_bot():
@@ -21,7 +21,10 @@ async def get_bot():
 
 @router.get("/bot/info")
 async def get_bot_info(authorization: str = Header(), bot: Bot = Depends(get_bot)):
-    if not secrets.compare_digest(authorization, key):
+    # Lists every guild with its owner and Foundry hostname, so it needs a
+    # real secret. Read per request; unset fails closed.
+    key = os.environ.get("ADMIN_API_KEY")
+    if not key or not secrets.compare_digest(authorization, key):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     with Session() as session:
@@ -34,8 +37,10 @@ async def get_bot_info(authorization: str = Header(), bot: Bot = Depends(get_bot
             "name": guild.name,
             "member_count": guild.member_count,
             "owner": {
-                "id": str(guild.owner.id) or "UNKNOWN",
-                "name": guild.owner.global_name or "UNKNOWN",
+                # guild.owner is looked up in the member cache, which is now
+                # loaded per guild on first use (utils.ensure_members).
+                "id": str(guild.owner_id),
+                "name": guild.owner.global_name if guild.owner else "UNKNOWN",
             },
         }
         for guild in bot.guilds
