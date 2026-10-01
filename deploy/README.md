@@ -4,7 +4,7 @@ Merging to `main` deploys. No SSH, no manual rebuild.
 
 ```
 merge to main
-  -> GitHub Actions builds the image and pushes ghcr.io/chunklighttuna/oronder:latest
+  -> GitHub Actions builds the image and pushes ghcr.io/oronder/oronder:latest
   -> watchtower (polls every 300s) pulls it and recreates the container
   -> the container's healthcheck reports on the new build
   -> rollback-guard.sh records it as good, or rolls it back
@@ -76,9 +76,9 @@ Worth doing once, on purpose, rather than discovering it during an outage:
 
 ```bash
 # stand up a deliberately broken image under the :latest tag
-docker tag ghcr.io/chunklighttuna/oronder:latest oronder:backup-of-latest
-printf 'FROM ghcr.io/chunklighttuna/oronder:latest\nCMD ["false"]\n' \
-  | docker build -t ghcr.io/chunklighttuna/oronder:latest -
+docker tag ghcr.io/oronder/oronder:latest oronder:backup-of-latest
+printf 'FROM ghcr.io/oronder/oronder:latest\nCMD ["false"]\n' \
+  | docker build -t ghcr.io/oronder/oronder:latest -
 docker compose up -d --pull never --force-recreate oronder
 
 # within ~2 minutes the guard should roll back and stop watchtower

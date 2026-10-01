@@ -22,7 +22,7 @@ set -euo pipefail
 
 COMPOSE_DIR="${COMPOSE_DIR:-/srv/oronder/foundry_discord}"
 SERVICE="${SERVICE:-oronder}"
-IMAGE="${IMAGE:-ghcr.io/chunklighttuna/oronder:latest}"
+IMAGE="${IMAGE:-ghcr.io/oronder/oronder:latest}"
 STATE_DIR="${STATE_DIR:-/var/lib/oronder-deploy}"
 # How long a container must stay healthy before we trust it enough to record it.
 SETTLE_SECONDS="${SETTLE_SECONDS:-180}"

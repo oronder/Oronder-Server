@@ -77,11 +77,11 @@ the auth tokens the module sends.
 ### 3. Start
 
 `docker-compose.yml` references the official image
-(`ghcr.io/chunklighttuna/oronder`) with `pull_policy: always`. To run your own
+(`ghcr.io/oronder/oronder`) with `pull_policy: always`. To run your own
 build, tag it locally and tell compose not to pull over it:
 
 ```bash
-docker build -t ghcr.io/chunklighttuna/oronder:latest .
+docker build -t ghcr.io/oronder/oronder:latest .
 docker compose up -d --pull never oronder oronder-db
 ```
 

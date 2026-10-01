@@ -1,6 +1,6 @@
 services:
   oronder:
-    image: ghcr.io/chunklighttuna/oronder:latest
+    image: ghcr.io/oronder/oronder:latest
     pull_policy: always
     command: uvicorn main:app --proxy-headers --host 0.0.0.0 --port ${UVICORN_PORT}
     hostname: oronder
@@ -78,7 +78,7 @@ services:
       retries: 5
 
   oronder-backup:
-    image: ghcr.io/chunklighttuna/oronder-backup:latest
+    image: ghcr.io/oronder/oronder-backup:latest
     hostname: oronder-backup
     container_name: oronder-backup
     restart: unless-stopped
