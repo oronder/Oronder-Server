@@ -1,24 +1,43 @@
 import re
+from functools import cache
 
 from discord import Embed
 
-import system
+import dnd
 from utils import capitalize_title, join_list
 
-backgrounds = {
-    bg["name"]: bg
-    for bg in system.load_json("backgrounds")["background"]
-    if bg["source"] in system.legal_sources
-}
+
+@cache
+def ensure_loaded():
+    """Load the 5e data this module exposes. Called on first use, not at
+    import, so importing it for anything else in it never needs the data.
+    """
+    global backgrounds
+
+    backgrounds = {
+        bg["name"]: bg
+        for bg in dnd.load_json("backgrounds")["background"]
+        if bg["source"] in dnd.allowed_sources
+    }
+
+
+def __getattr__(name):
+    """Load on first attribute access instead of at import."""
+    if name in {"backgrounds"}:
+        ensure_loaded()
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def get(background, key):
+    ensure_loaded()
     return background.get(
         key, backgrounds.get(background.get("_copy", {}).get("name"), {}).get(key, None)
     )
 
 
 def generate_background_embed(background_name):
+    ensure_loaded()
     background = backgrounds[background_name]
     embed = Embed(title=background_name)
     skills = get(background, "skillProficiencies")

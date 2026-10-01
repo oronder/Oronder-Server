@@ -35,24 +35,35 @@ from discord.abc import GuildChannel
 
 disord_token_url = "https://discord.com/api/oauth2/token"
 
-oronder_server_id = 860520082697617468
-oronder_dnd_server_id = 933858354177118228
-oronder_permissions_test_server_id = 1147549883310551181
-my_guild_ids = [oronder_server_id, oronder_permissions_test_server_id]
-supporter_role_id = 1127646084743839877
-beta_tester_role_id = 1199113447540015115
+def _env_id(name: str) -> int | None:
+    value = os.getenv(name, "").strip()
+    return int(value) if value else None
 
-oronder_changelog_channel_id = 1160679333506076752
 
-chris_discord_id = 579751233871544363
-gander7_discord_id = 159326185778577408
-tomp_discord_id = 858570374349979648
-johan_discord_id = 352211993249185803
-kabs_discord_id = 129420236767232000
+def _env_ids(name: str) -> list[int]:
+    return [int(v) for v in os.getenv(name, "").replace(" ", "").split(",") if v]
 
-oronder_bot_prod = 1064553830810923048
-oronder_bot_test = 1148024288973160529
-oronder_bot_dev = 1126179973284237374
+
+# Instance-specific Discord ids. All optional: a self-hosted instance can leave
+# every one unset and the feature it drives is simply off. Parsed at import, so
+# a malformed id fails at startup rather than at first use.
+
+# Guild whose supporter / beta-tester roles grant subscriptions.
+HOME_GUILD_ID = _env_id("HOME_GUILD_ID")
+SUPPORTER_ROLE_ID = _env_id("SUPPORTER_ROLE_ID")
+BETA_TESTER_ROLE_ID = _env_id("BETA_TESTER_ROLE_ID")
+# Guild owners always exempt from subscription checks.
+SUBSCRIPTION_EXEMPT_USER_IDS = _env_ids("SUBSCRIPTION_EXEMPT_USER_IDS")
+# Users who may run /superadmin and edit any GM's missions.
+SUPER_ADMIN_USER_IDS = _env_ids("SUPER_ADMIN_USER_IDS")
+# Guilds /superadmin is registered in. Unset registers it nowhere.
+SUPER_ADMIN_GUILD_IDS = _env_ids("SUPER_ADMIN_GUILD_IDS")
+# Guild owners DMed raw, unhandled Foundry payloads, for debugging.
+DEBUG_DM_USER_IDS = _env_ids("DEBUG_DM_USER_IDS")
+# Channel POST /update_discord announces Foundry module releases in.
+CHANGELOG_CHANNEL_ID = _env_id("CHANGELOG_CHANNEL_ID")
+# Guilds whose characters are mirrored to Wiki.js.
+WIKIJS_GUILD_IDS = _env_ids("WIKIJS_GUILD_IDS")
 
 log_level = os.getenv("LOG_LEVEL", "INFO")
 
@@ -234,11 +245,13 @@ def check_permissions(
     role: Member | Role,
     requires_mention: bool = False,
     external: bool = False,
+    requires_polls: bool = False,
 ) -> str | None:
     """
     :param channel: channel to check permissions against
     :param role: Typically the bot's role, but could be used to check gm_role
     :param requires_mention: check if bot requires mention all permission for channel
+    :param requires_polls: check if bot requires create polls permission for channel
     :param external: Format output string for non-Discord use
     :return: Description of required permissions if any.
     """
@@ -269,6 +282,8 @@ def check_permissions(
     if isinstance(channel, TextChannel):
         if not perms.send_messages:
             errs.append("Send Messages")
+        if requires_polls and not perms.send_polls:
+            errs.append("Create Polls")
     if isinstance(channel, ForumChannel):
         if not perms.manage_threads:
             errs.append("Manage Threads")
@@ -280,6 +295,23 @@ def check_permissions(
         if errs
         else None
     )
+
+
+async def ensure_members(guild: "Guild | None") -> None:
+    """Load a guild's member list on first use.
+
+    Startup chunking is off (see discord_client.py): with the members intent,
+    py-cord would request every guild's members before firing on_ready, paced
+    at 110 gateway sends a minute -- about six minutes for a few hundred guilds.
+    Code that genuinely needs the full member list calls this first instead.
+    """
+    if guild is not None and not guild.chunked:
+        await guild.chunk()
+
+
+def mention_user(user_id: int | None) -> str:
+    """Mention a user by id. Unlike mention_safe, needs no cached Member."""
+    return f"<@{user_id}>" if user_id else NOT_FOUND
 
 
 def mention_safe(mentionable: Thread | GuildChannel | Role | Member | None) -> str:

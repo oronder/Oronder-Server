@@ -1,5 +1,5 @@
 import pprint
-from typing import Dict, List, Callable
+from typing import Dict, List
 
 import socketio
 from discord import Bot, ScheduledEventStatus, Guild, Embed
@@ -9,13 +9,13 @@ from sqlalchemy import select
 from database import Session, GoldLedger
 from database.guild_settings_table import GuildSettingsTable
 from database.missions import MissionTable, edit_mission
-from system.items import format_number
-from system.rules import get_lvl
+from dnd.items import format_number
+from dnd.rules import get_lvl
 from models.guild_settings import GuildSettings
 from models.missions import Mission
 from routers.foundry_api import guild_auth
 from routers.socket_io import sio
-from utils import getLogger, gander7_discord_id, chris_discord_id
+from utils import getLogger, DEBUG_DM_USER_IDS
 
 logger = getLogger(__name__)
 
@@ -68,9 +68,18 @@ class SocketNamespace(socketio.AsyncNamespace):
     async def on_connect(self, sid: str, environ, auth):
         logger.info(f"{sid} connected")
 
-        guild_settings = await guild_auth(
-            environ["HTTP_ORIGIN"], auth.get("Authorization")
-        )
+        try:
+            guild_settings = await guild_auth(
+                environ["HTTP_ORIGIN"], auth.get("Authorization")
+            )
+        except HTTPException as e:
+            # socket.io doesn't know what an HTTPException is: it logs the whole
+            # traceback as an unhandled handler error, and the client just sees
+            # a generic failure. ConnectionRefusedError is the documented way to
+            # turn a connection down, and its arguments reach the client.
+            raise socketio.exceptions.ConnectionRefusedError(
+                e.detail or "unauthorized"
+            ) from None
 
         self.guilds_to_sids.setdefault(guild_settings.id, list()).append(sid)
         self.sid_to_guild[sid] = guild_settings.id
@@ -98,7 +107,7 @@ class SocketNamespace(socketio.AsyncNamespace):
         self.guilds_to_missions_to_xp[guild_id][mission_id].append(payload["id_to_xp"])
 
     async def get_description(
-        self, guild_id: int, actor_id: str, item_id: str, cb: Callable
+        self, guild_id: int, actor_id: str, item_id: str, cb: callable
     ) -> bool:
         sid = next(iter(self.guilds_to_sids.get(guild_id) or []), None)
         if sid:
@@ -113,7 +122,7 @@ class SocketNamespace(socketio.AsyncNamespace):
             return False
 
     async def send_roll(
-        self, guild_id: int, payload: dict, cb: Callable = lambda **kwargs: None
+        self, guild_id: int, payload: dict, cb: callable = lambda **kwargs: None
     ) -> bool:
         sid = next(iter(self.guilds_to_sids.get(guild_id) or []), None)
         if sid:
@@ -156,8 +165,10 @@ class SocketNamespace(socketio.AsyncNamespace):
             await channel.send(embed=embed)
         elif isinstance(payload, str) and payload:
             await channel.send(content=payload[:2000])
-        elif guild.owner_id in [gander7_discord_id, chris_discord_id]:
-            await guild.owner.send(content=pprint.pformat(payload)[:2000])
+        elif guild.owner_id in DEBUG_DM_USER_IDS:
+            # guild.owner comes from the member cache, loaded lazily.
+            owner = guild.owner or await self.bot.fetch_user(guild.owner_id)
+            await owner.send(content=pprint.pformat(payload)[:2000])
         else:
             logger.warning(pprint.pformat(payload))
 

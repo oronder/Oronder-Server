@@ -1,0 +1,10 @@
+[Unit]
+Description=Roll oronder back if watchtower deploys a broken image
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/srv/oronder/foundry_discord/deploy/rollback-guard.sh
+# Environment=COMPOSE_DIR=/srv/oronder/foundry_discord
+# Environment=SETTLE_SECONDS=180

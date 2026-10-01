@@ -5,13 +5,13 @@ from typing import List, Optional, Literal, Any, Annotated, Tuple
 import d20
 from d20 import RollResult
 from discord.utils import snowflake_time
-from pydantic import Field, AliasChoices, BeforeValidator, field_validator
+from pydantic import Field, AliasChoices, BeforeValidator, field_validator, ValidationError
 from sqlalchemy import text, any_, func, select, TextClause
 
 from database import Session, CampaignTable, XpAdjustmentsTable
-from system import STAT_NAME_TO_ABRV, STAT_ABRV_TO_NAME, TOOLS
-from system.items import attack_modes_machine, calculate_average_damage
-from system.rules import lvl_to_xp
+from dnd import STAT_NAME_TO_ABRV, STAT_ABRV_TO_NAME, TOOLS
+from dnd.items import attack_modes_machine, calculate_average_damage
+from dnd.rules import lvl_to_xp
 from models.base_model import OronderBaseModel
 from models.guild_settings import GuildSettings
 from utils import getLogger
@@ -51,18 +51,20 @@ class Currency(OronderBaseModel):
 
 
 class AbilityBonuses(OronderBaseModel):
-    check: str
-    save: str
-    skill: str
+    check: str = ""
+    save: str = ""
+    skill: str = ""
 
 
+# Everything here is stored and never read. dnd5e 6.x stopped emitting several
+# of these, and requiring them rejected every 6.x actor upload outright.
 class Bonuses(OronderBaseModel):
-    mwak: dict
-    rwak: dict
-    msak: dict
-    rsak: dict
-    abilities: AbilityBonuses
-    spell: dict
+    mwak: dict = Field(default_factory=dict)
+    rwak: dict = Field(default_factory=dict)
+    msak: dict = Field(default_factory=dict)
+    rsak: dict = Field(default_factory=dict)
+    abilities: AbilityBonuses = Field(default_factory=AbilityBonuses)
+    spell: dict = Field(default_factory=dict)
 
 
 class Rollable(OronderBaseModel):
@@ -153,8 +155,9 @@ class Skills(OronderBaseModel):
 class Ability(Rollable):
     value: int
     proficient: int
-    saveBonus: int
-    checkBonus: int
+    # Dropped by dnd5e 6.x; stored but never read, so don't reject the actor.
+    saveBonus: int = 0
+    checkBonus: int = 0
     save: int
     dc: int
 
@@ -198,11 +201,11 @@ class Biography(OronderBaseModel):
     public: str
 
 
-class Item(OronderBaseModel):
-    name: str
-    img: str | None = None
-    id: str
-    type: Literal[
+# Item types dnd5e is known to ship. Kept for reference only: `Item.type` is an
+# open string so that types added by newer dnd5e releases (e.g. "facility" from
+# the 2024 Bastion rules) or by modules don't fail validation for the whole actor.
+KNOWN_ITEM_TYPES = frozenset(
+    {
         "background",
         "feat",
         "equipment",
@@ -215,26 +218,43 @@ class Item(OronderBaseModel):
         "spell",
         "subclass",
         "tool",
-    ]
+        "facility",
+    }
+)
+
+
+class Item(OronderBaseModel):
+    name: str
+    img: str | None = None
+    id: str
+    type: str
 
 
 class Attack(Item):
     attack: str
+    # Older module versions uploaded attacks without an item id, and ~19% of
+    # stored actors still carry some. Without an id the attack can't be rolled
+    # in Foundry, but it can still be rolled by the bot.
+    id: str | None = None
 
 
 class Weapon(Attack):
     # noinspection PyTypeHints
-    attack_modes: List[Literal[*attack_modes_machine]]
+    # Absent on weapons stored before May 2025; an empty list means "no mode
+    # choice", which is what the /attack autocomplete already assumes.
+    attack_modes: List[Literal[*attack_modes_machine]] = Field(default_factory=list)
     type: Literal["weapon"] = "weapon"
 
     @field_validator("attack_modes", mode="before")
     @classmethod
     def filter_attack_modes(cls, v):
-        return [i for i in v if i in attack_modes_machine]
+        return [i for i in (v or []) if i in attack_modes_machine]
 
 
 class Spell(Attack):
-    level: int
+    # Absent on older stored spells. None reads as "no slot choice", like a
+    # cantrip, which is how the spell-level autocomplete already treats 0.
+    level: int | None = None
     type: Literal["spell"] = "spell"
 
 
@@ -322,11 +342,18 @@ def validate_weapons(weapons: Any) -> Any:
         for weapon in weapons:
             if isinstance(weapon, (Weapon, Spell)):
                 validated_weapons.append(weapon)
-            elif isinstance(weapon, dict):
-                if weapon.get("type") == "spell":
-                    validated_weapons.append(Spell.model_validate(weapon))
-                elif weapon.get("type") == "weapon":
-                    validated_weapons.append(Weapon.model_validate(weapon))
+            elif isinstance(weapon, dict) and weapon.get("type") in ("spell", "weapon"):
+                model = Spell if weapon["type"] == "spell" else Weapon
+                # One malformed stored entry used to make the whole actor
+                # unloadable -- every /roll, /attack and lookup for it failed.
+                # Skip the entry instead, and say so.
+                try:
+                    validated_weapons.append(model.model_validate(weapon))
+                except ValidationError as e:
+                    logger.warning(
+                        f"Skipping unreadable {weapon['type']} {weapon.get('name')!r}: "
+                        f"{e.error_count()} validation error(s)"
+                    )
         return validated_weapons
 
 

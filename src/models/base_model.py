@@ -1,7 +1,9 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class OronderBaseModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     def to_dict(self):
         result = {}
         for key, value in vars(self).items():
@@ -15,6 +17,3 @@ class OronderBaseModel(BaseModel):
             else:
                 result[key] = value
         return result
-
-    class Config:
-        from_attributes = True

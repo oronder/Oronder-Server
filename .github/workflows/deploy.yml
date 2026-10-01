@@ -2,7 +2,7 @@ name: Build & Push container on push to main
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch: { }
 
 env:
@@ -11,23 +11,28 @@ env:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    # Set the RUNNER repository variable (e.g. "self-hosted") to build on your
+    # own runner. Forks don't inherit repo variables, so they fall back to
+    # GitHub's. Safe on a public repo only because this workflow never runs
+    # on pull_request: a workflow that does must hardcode ubuntu-latest, or
+    # fork PRs would execute on the self-hosted machine.
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read
       packages: write  # allow pushing to GHCR with GITHUB_TOKEN
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: actions/checkout@v7
+        with:
+          # full history, so the changelog step can read this push's range
+          fetch-depth: 0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -46,7 +51,7 @@ jobs:
           echo "BACKUP_IMAGE_NAME=ghcr.io/${OWNER_LC}/oronder-backup" >> $GITHUB_ENV
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -56,11 +61,11 @@ jobs:
             ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.SHORT_SHA }}
             ${{ env.IMAGE_NAME }}:main
             ${{ env.IMAGE_NAME }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
 
       - name: Build and push (backup)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./db_backup.Dockerfile
@@ -70,5 +75,17 @@ jobs:
             ${{ env.BACKUP_IMAGE_NAME }}:${{ steps.meta.outputs.SHORT_SHA }}
             ${{ env.BACKUP_IMAGE_NAME }}:main
             ${{ env.BACKUP_IMAGE_NAME }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.BACKUP_IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.BACKUP_IMAGE_NAME }}:buildcache,mode=max
+
+      # Announce what changed, as the bot, in the Discord changelog channel.
+      # Needs the API_URL variable and the UPDATE_DISCORD_KEY secret; without
+      # them the step prints why and does nothing.
+      - name: Post changelog
+        if: github.event_name == 'push'
+        env:
+          API_URL: ${{ vars.API_URL }}
+          UPDATE_DISCORD_KEY: ${{ secrets.UPDATE_DISCORD_KEY }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: python3 .github/workflows/post_changelog.py

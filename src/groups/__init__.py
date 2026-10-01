@@ -10,7 +10,7 @@ from database.guild_settings_table import GuildSettingsTable
 from database.missions import MissionTable
 from models.actor import Actor
 from models.missions import Mission
-from utils import oronder_server_id, chris_discord_id, getLogger
+from utils import HOME_GUILD_ID, SUPER_ADMIN_USER_IDS, getLogger
 
 logger = getLogger(__name__)
 
@@ -31,8 +31,9 @@ display_choices = [DISPLAY_PUBLIC, DISPLAY_PRIVATE]
 
 
 def invite_link(ctx: ApplicationContext):
-    if ctx.bot.get_guild(oronder_server_id).get_member(ctx.user.id):
-        return f"https://discord.com/channels/{oronder_server_id}/role-subscriptions"
+    home = ctx.bot.get_guild(HOME_GUILD_ID) if HOME_GUILD_ID else None
+    if home and home.get_member(ctx.user.id):
+        return f"https://discord.com/channels/{HOME_GUILD_ID}/role-subscriptions"
     else:
         return "https://discord.gg/Adg48Xrs6K"
 
@@ -88,7 +89,7 @@ def get_actor(
 def get_mission_for_edit(title: str, ctx: ApplicationContext) -> Tuple[Mission, dict]:
     try:
         stmt = select(MissionTable).filter_by(guild_id=ctx.guild_id, title=title)
-        if ctx.user.id != chris_discord_id:
+        if ctx.user.id not in SUPER_ADMIN_USER_IDS:
             stmt = stmt.filter_by(gm_id=ctx.user.id)
         with Session() as session:
             mission = Mission.model_validate(session.scalar(stmt))
@@ -111,3 +112,18 @@ async def is_gm(ctx: ApplicationContext):
         return False
 
     return True
+
+
+def drop_subcommands(bot, group_name: str, names) -> None:
+    """Unregister subcommands of an already-added cog group.
+
+    py-cord copies a Cog's commands when the class is defined, so filtering
+    the class attribute has no effect on what gets registered -- the copy the
+    bot holds has to be edited instead, after add_cog.
+    """
+    names = set(names)
+    for command in bot.pending_application_commands:
+        if command.name == group_name and hasattr(command, "subcommands"):
+            command.subcommands = [
+                c for c in command.subcommands if c.name not in names
+            ]

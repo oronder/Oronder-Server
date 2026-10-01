@@ -8,16 +8,16 @@ from pydantic import TypeAdapter
 from sqlalchemy import select, func, or_, any_, and_
 from sqlalchemy.exc import ArgumentError
 
-import system
+import dnd
 from database import Session, CampaignTable, XpAdjustmentsTable
 from database.actor_table import ActorTable
 from database.guild_settings_table import GuildSettingsTable
 from database.missions import MissionTable
-from system import spells, ABILITIES, SKILLS, OTHER_ROLLABLES, rules
-from system.backgrounds import backgrounds
-from system.items import attack_modes_reversed
+from dnd import spells, ABILITIES, SKILLS, OTHER_ROLLABLES, rules
+from dnd import backgrounds as backgrounds_data
+from dnd.items import attack_modes_reversed
 from models.actor import Tools, Details, Actor, Attack, Spell
-from utils import timezones, chris_discord_id, getLogger, truncate
+from utils import timezones, SUPER_ADMIN_USER_IDS, getLogger, truncate
 
 logger = getLogger(__name__)
 
@@ -371,7 +371,7 @@ def stat_autocomplete(ctx: AutocompleteContext):
 def rule_autocomplete(ctx: AutocompleteContext):
     item_properties = {
         f"Property: {j['name']}"
-        for i in system.base_table["itemProperty"]
+        for i in dnd.base_table["itemProperty"]
         if "entries" in i
         for j in i.get("entries")
     }
@@ -383,17 +383,17 @@ def rule_autocomplete(ctx: AutocompleteContext):
     conditions = {
         f"Condition: {s['name']}"
         for s in rules.conditions["condition"]
-        if s["source"] in system.legal_sources
+        if s["source"] in dnd.allowed_sources
     }
     statuses = {
         f"Status: {s['name']}"
         for s in rules.conditions["status"]
-        if s["source"] in system.legal_sources
+        if s["source"] in dnd.allowed_sources
     }
     diseases = {
         f"Disease: {s['name']}"
         for s in rules.conditions["disease"]
-        if s["source"] in system.legal_sources
+        if s["source"] in dnd.allowed_sources
     }
 
     movement = [
@@ -407,8 +407,7 @@ def rule_autocomplete(ctx: AutocompleteContext):
     movement = [f"Movement: {m}" for m in movement]
 
     sage_advice = [
-        f"SAC: {system.strip_template(sa)}"
-        for sa in rules.sage_advice_compendium.keys()
+        f"SAC: {dnd.strip_template(sa)}" for sa in rules.sage_advice_compendium.keys()
     ]
 
     return search(
@@ -474,7 +473,7 @@ def mission_edit_autocomplete(ctx: AutocompleteContext):
         .limit(25)
     )
 
-    if ctx.interaction.user.id != chris_discord_id:
+    if ctx.interaction.user.id not in SUPER_ADMIN_USER_IDS:
         stmt = stmt.where(MissionTable.gm_id == ctx.interaction.user.id)
     with Session() as session:
         return session.scalars(stmt).all()
@@ -595,7 +594,7 @@ def mission_remove_autocomplete(ctx: AutocompleteContext):
 
 
 def background_autocomplete(ctx: AutocompleteContext):
-    return search(ctx.value, backgrounds.keys(), sorted)
+    return search(ctx.value, backgrounds_data.backgrounds.keys(), sorted)
 
 
 def spell_autocomplete(ctx: AutocompleteContext):

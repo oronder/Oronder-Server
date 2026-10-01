@@ -24,6 +24,8 @@ from discord import (
     Forbidden,
     Message,
     Interaction,
+    Poll,
+    HTTPException,
 )
 from discord.ext.commands import Bot, bot_has_guild_permissions
 from discord.utils import format_dt
@@ -31,7 +33,7 @@ from sqlalchemy.exc import NoResultFound
 
 from database import Session
 from database.guild_settings_table import GuildSettingsTable
-from system.items import format_number
+from dnd.items import format_number
 from groups import no_init_err_msg
 from groups.autocomplete import timezone_autocomplete
 from models.guild_settings import GuildSettings, current_subscription, Day
@@ -39,8 +41,8 @@ from utils import (
     is_url,
     hours_list,
     mention_safe,
-    chris_discord_id,
-    my_guild_ids,
+    SUPER_ADMIN_USER_IDS,
+    SUPER_ADMIN_GUILD_IDS,
     getLogger,
 )
 
@@ -59,6 +61,26 @@ voice_channel_str = "Voice Channel for sessions."
 scheduling_channel_str = "Text Channel where new games will be advertised."
 gm_role_str = "Discord Role for GMs."
 session_channel_str = "Forum or Text Channel where games will be held."
+
+rollcall_question = "Which days are you available?"
+rollcall_days = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+]
+# Roll call is weekly, so leave each poll open until the next one is posted.
+rollcall_poll_hours = 7 * 24
+
+
+def rollcall_poll() -> Poll:
+    poll = Poll(rollcall_question, duration=rollcall_poll_hours, allow_multiselect=True)
+    for day in rollcall_days:
+        poll.add_answer(day)
+    return poll
 
 
 class Admin(Cog):
@@ -88,7 +110,11 @@ class Admin(Cog):
         "superadmin",
         "Oronder Bot Management",
         default_member_permissions=Permissions(administrator=True),
-        contexts={InteractionContextType.guild},
+        # Set on the group: py-cord registers the group, so guild_ids on its
+        # subcommands were ignored and /superadmin was registered globally.
+        # An empty list registers it nowhere. No `contexts`: py-cord rejects it
+        # on guild commands, which are guild-only anyway.
+        guild_ids=SUPER_ADMIN_GUILD_IDS,
     )
 
     @staticmethod
@@ -98,7 +124,7 @@ class Admin(Cog):
         split = [int(n) for n in link.split("/") if n.isnumeric()]
         if len(split) != 3:
             out = logger.err_msg("Invalid Link", ctx.guild_id)
-        elif ctx.user.id != chris_discord_id:
+        elif ctx.user.id not in SUPER_ADMIN_USER_IDS:
             out = logger.err_msg("Insufficient Permissions", ctx.guild_id)
         else:
             guild = ctx.bot.get_guild(split[0])
@@ -124,7 +150,6 @@ class Admin(Cog):
     @super_admin_group.command(
         name="delete_bot_message",
         description="Delete Bot Message.",
-        guild_ids=my_guild_ids,
     )
     @option("link", str, description="Message Link.")
     async def delete_msg(self, ctx: ApplicationContext, link: str):
@@ -135,7 +160,7 @@ class Admin(Cog):
         await ctx.respond(**response)
 
     @super_admin_group.command(
-        name="react", description="React to Message with Emoji", guild_ids=my_guild_ids
+        name="react", description="React to Message with Emoji"
     )
     @option("link", str, description="Message Link.")
     @option(
@@ -331,7 +356,7 @@ class Admin(Cog):
                  In the text box search for *Use Application Commands* and enable it.""")
 
         await ctx.respond(
-            content=f"Oronder has been successfully initialized. Set your Foundry VTT token with:\n`await game.settings.set('oronder', 'auth', '{token}')`"
+            content=f"Oronder has been successfully initialized. Your Foundry VTT token is:\n`{token}`"
             + "\nYou may regenerate this at any time using `/admin reset_token`.",
             ephemeral=True,
         )
@@ -617,7 +642,7 @@ class Admin(Cog):
             session.commit()
 
         await ctx.respond(
-            f"Your Foundry VTT token can be set with:\n`await game.settings.set('oronder', 'auth', '{token}')`\nDo not share this with anyone.",
+            f"Your Foundry VTT token is:\n`{token}`\nDo not share this with anyone.",
             ephemeral=True,
         )
 
@@ -633,7 +658,7 @@ class Admin(Cog):
     @option("role", Role, description="Role to mention for rollcall.")
     @option("day", choices=[d.name for d in Day], description="Day to post Roll Call.")
     @option("time", choices=hours_list, description="Time to post Roll Call.")
-    @bot_has_guild_permissions(mention_everyone=True)
+    @bot_has_guild_permissions(mention_everyone=True, send_polls=True)
     async def rollcall(
         self,
         ctx: ApplicationContext,
@@ -647,17 +672,28 @@ class Admin(Cog):
             await ctx.respond(**logger.err_msg(no_init_err_msg, ctx.guild_id))
             return
 
-        if (
-            role.id == ctx.guild_id
-            and not channel.permissions_for(ctx.guild.self_role).mention_everyone
-        ):
-            await ctx.respond(
-                **logger.err_msg(
-                    f'Oronder does not have "Mention Everyone" permissions in {channel.mention}',
-                    ctx.guild_id,
+        rollcall_channel = channel or ctx.guild.get_channel(
+            guild_settings.rollcall_channel_id
+        )
+        rollcall_role_id = role.id if role else guild_settings.rollcall_role_id
+        if rollcall_channel:
+            perms = rollcall_channel.permissions_for(ctx.guild.self_role)
+            if rollcall_role_id == ctx.guild_id and not perms.mention_everyone:
+                await ctx.respond(
+                    **logger.err_msg(
+                        f'Oronder does not have "Mention Everyone" permissions in {rollcall_channel.mention}',
+                        ctx.guild_id,
+                    )
                 )
-            )
-            return
+                return
+            if not perms.send_polls:
+                await ctx.respond(
+                    **logger.err_msg(
+                        f'Oronder does not have "Create Polls" permissions in {rollcall_channel.mention}',
+                        ctx.guild_id,
+                    )
+                )
+                return
 
         try:
             with Session() as session:
@@ -738,30 +774,35 @@ class Admin(Cog):
                     guild_settings = GuildSettingsTable.lookup(
                         guild.id
                     )  # refresh settings before running
-                    rollcall_channel = guild.get_channel(
-                        guild_settings.rollcall_channel_id
-                    )
-                    mention = mention_safe(
-                        guild.get_role(guild_settings.rollcall_role_id)
-                    )
-                    msgs = [
-                        f"{mention}\n- Sunday",
-                        "- Monday",
-                        "- Tuesday",
-                        "- Wednesday",
-                        "- Thursday",
-                        "- Friday",
-                        "- Saturday",
-                    ]
-                    for msg in msgs:
-                        await rollcall_channel.send(msg)
-                        await asyncio.sleep(.6)
+                    if not guild_settings or not guild_settings.rollcall_enabled:
+                        logger.info(f"Roll Call for {guild.name} disabled.")
+                        break
+                    await Admin.post_rollcall(guild, guild_settings)
+                    # step past this run's minute so it is not scheduled again
+                    await asyncio.sleep(60)
         except asyncio.CancelledError:
             logger.info(f"Roll Call task for {guild.name} canceled.")
         finally:
             # Clean up task reference when done
             if hasattr(bot, task_key):
                 delattr(bot, task_key)
+
+    @staticmethod
+    async def post_rollcall(guild: Guild, guild_settings: GuildSettings):
+        """Post the weekly availability poll.
+
+        Votes live on the poll itself, so Discord tallies them and shows who
+        picked each day; nothing is held in memory that a restart could lose.
+        """
+        rollcall_channel = guild.get_channel(guild_settings.rollcall_channel_id)
+        if not rollcall_channel:
+            logger.error(f"{guild.id}: Roll Call channel not found.")
+            return
+        mention = mention_safe(guild.get_role(guild_settings.rollcall_role_id))
+        try:
+            await rollcall_channel.send(mention, poll=rollcall_poll())
+        except HTTPException as e:
+            logger.error(f"{guild.id}: Roll Call failed to post. {e}")
 
 
 def setup(bot: Bot):

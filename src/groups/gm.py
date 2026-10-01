@@ -22,14 +22,14 @@ from sqlalchemy import select, func, any_, text, and_
 from sqlalchemy.exc import NoResultFound
 from tabulate import tabulate
 
-import system
+import dnd
 from database import Session, CampaignTable, XpAdjustmentsTable
 from database.actor_table import ActorTable
 from database.game_master_table import GameMasterTable
 from database.guild_settings_table import GuildSettingsTable
 from database.missions import MissionTable, edit_mission, upsert_mission
-from system.items import format_number
-from system.rules import get_lvl, lvl_to_xp
+from dnd.items import format_number
+from dnd.rules import get_lvl, lvl_to_xp
 from groups import (
     character_description,
     get_mission_for_edit,
@@ -411,17 +411,14 @@ class GM(Cog):
             gm_role = ctx.guild.get_role(guild_settings.gm_role_id)
             if gm.bot:
                 errors.append("GM must be human.")
-            if gm not in gm_role.members:
+            if gm_role not in gm.roles:
                 errors.append(f"{gm.mention} is not a member of {gm_role.mention}.")
-            if not gm.bot and gm in gm_role.members:
-                cur_gm = (
-                    ctx.user
-                    if ctx.user.id == mission.gm_id
-                    else ctx.guild.get_member(mission.gm_id)
-                )
+            if not gm.bot and gm_role in gm.roles:
+                # A mention needs only the id, not a cached Member.
+                cur_gm_mention = f"<@{mission.gm_id}>"
                 mission.gm_id = gm.id
                 mission.gm_pc = None
-                embed.add_field(name="GM", value=f"{cur_gm.mention} -> {gm.mention}")
+                embed.add_field(name="GM", value=f"{cur_gm_mention} -> {gm.mention}")
 
         if date_time:
             date_time, time_error = parse_time(date_time, guild_settings.timezone)
@@ -1048,7 +1045,7 @@ class GM(Cog):
         with Session() as session:
             stmt = text(
                 textwrap.dedent(f"""
-                SELECT distinct on (actors.id) actors.name, actors.skills -> '{system.abreviate_stat_name(skill)}' ->> 'passive' as passive
+                SELECT distinct on (actors.id) actors.name, actors.skills -> '{dnd.abreviate_stat_name(skill)}' ->> 'passive' as passive
                 FROM missions
                 JOIN LATERAL unnest(missions.pcs::text[]) AS actor_id ON true
                 JOIN actors ON actor_id = actors.id

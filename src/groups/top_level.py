@@ -6,17 +6,17 @@ from d20 import RollError
 from discord import Embed, EmbedFooter, EmbedField
 
 from database.guild_settings_table import GuildSettingsTable
-from system import (
+from dnd import (
     handle_description_entries,
-    cleanse_damage_roll,
+    clense_damage_roll,
     STAT_NAME_TO_ABRV,
     SKILLS,
     TOOLS,
     ABILITIES,
     OTHER_ROLLABLES_NAME_TO_ABRV,
 )
-from system.items import attack_modes
-from system.rules import actions
+from dnd.items import attack_modes
+from dnd import rules
 from groups import get_actor, DISPLAY_PRIVATE, invite_link
 from models.actor import Spell
 from models.guild_settings import Subscription
@@ -128,14 +128,18 @@ async def roll_attack(
 
     async def send_atk(atk: str | None = None, dmg: str | List | None = None):
         if not atk:
+            # str.replace returns a new string. The results used to be
+            # discarded, so every bot-side attack rolled a single d20 while
+            # the embed still announced [Advantage] / [Disadvantage].
+            formula = attack.attack
             match advantage:
                 case "Disadvantage":
-                    attack.attack.replace("1d20", "2d20kl1", 1)
+                    formula = formula.replace("1d20", "2d20kl1", 1)
                 case "Advantage":
-                    attack.attack.replace(
+                    formula = formula.replace(
                         "1d20", "3d20kh1" if actor.elven_accuracy() else "2d20kh1", 1
                     )
-            atk = d20.roll(cleanse_damage_roll(attack.attack)).result
+            atk = d20.roll(clense_damage_roll(formula)).result
 
         embed = Embed(
             title=attack.name,
@@ -158,7 +162,9 @@ async def roll_attack(
         await ctx.respond(embed=embed)
 
     guild_settings = GuildSettingsTable.lookup(ctx.guild_id)
-    if guild_settings.roll_discord_to_foundry:
+    # Foundry rolls the item by id; an attack stored without one (older module
+    # versions) can only be rolled here.
+    if guild_settings.roll_discord_to_foundry and attack.id:
         # Defer the interaction to avoid 'Unknown interaction' if Foundry takes >3s
         try:
             await ctx.defer()
@@ -239,7 +245,7 @@ async def action(
         color=discord.Color.red() if actor.details.dead else None,
     )
 
-    description = actions[action_type]
+    description = rules.actions[action_type]
     times = [
         t
         if isinstance(t, str)
