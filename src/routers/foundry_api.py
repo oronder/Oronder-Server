@@ -278,8 +278,11 @@ async def synced_actor(payload: Annotated[dict, Body()]) -> OronderBaseModel:
 
 @router.put("/actor")
 async def upsert_actor(
+    # Order matters: FastAPI resolves dependencies in parameter order, and auth
+    # must come before validating the body, or an unauthenticated caller with a
+    # malformed body gets a 422 describing the schema instead of a 401.
+    guild_settings: Annotated[GuildSettings, Depends(guild_auth)],
     actor: Annotated[OronderBaseModel, Depends(synced_actor)],
-    guild_settings=Depends(guild_auth),
     session=Depends(session_handler),
 ):
     # dnd5e keeps its own table, shaped like dnd5e's roll data; every other
