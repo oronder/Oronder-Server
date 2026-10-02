@@ -184,34 +184,46 @@ def attack(
     return embed
 
 
-# A damage component: a dice expression followed by its type, e.g.
-# "1d6 + 2 piercing" or "2d8 fire".
+# A damage component: a dice expression and the damage type it deals, e.g.
+# "(1d10 + 1) slashing" or "1d6 persistent acid". pf2e joins components with
+# "+" -- "(1d10 + 1) slashing + 6 spirit", "2d8 slashing + 1d6 fire" -- so the
+# string is read as a run of these rather than split on separators. A type is
+# two or more letters, which is what stops the "d" in "1d6" reading as one.
 _COMPONENT = re.compile(
-    r"^(?P<expr>[\dd\s+\-*()]+?)\s*(?P<kind>[A-Za-z][A-Za-z \-]*)?$"
+    r"\s*\+?\s*(?P<expr>[\d\s+\-*()d]+?)\s*"
+    r"(?P<kind>(?:persistent\s+)?[a-z]{2,})\b",
+    re.IGNORECASE,
 )
 
 
 def roll_damage(damage: str) -> str:
-    """Roll a pf2e damage string, keeping its damage types.
+    """Roll a pf2e damage string, one line per damage type.
 
-    Shapes vary by weapon and rune, so anything this cannot parse is shown as
-    the original text rather than raising: a strike with odd damage should
-    still be rollable."""
-    parts = []
-    for component in re.split(r"\s*(?:,|\bplus\b)\s*", damage.strip()):
-        if not component:
-            continue
-        m = _COMPONENT.match(component)
+    Anything that does not parse cleanly is shown as the original text rather
+    than raising: a strike with unusual damage should still be rollable.
+    Persistent damage keeps its label, since pf2e applies it at the end of the
+    turn rather than on the hit."""
+    text = damage.strip()
+    parts, pos, immediate = [], 0, 0
+    for m in _COMPONENT.finditer(text):
+        if text[pos : m.start()].strip():
+            return text  # something between components we did not understand
+        expr = m["expr"].replace(" ", "").lstrip("+")
+        kind = m["kind"].lower()
         try:
-            if not m:
-                raise ValueError(component)
-            expr = m["expr"].replace(" ", "")
             rolled = d20.roll(expr)
-            kind = (m["kind"] or "").strip()
-            parts.append(f"{rolled} {kind}".rstrip())
         except (ValueError, d20.RollError):
-            parts.append(component)
-    return "\n".join(parts) or damage
+            return text
+        parts.append(f"{rolled} {' '.join(kind.split())}")
+        if not kind.startswith("persistent"):
+            immediate += rolled.total
+        pos = m.end()
+    if not parts or text[pos:].strip():
+        return text
+    # A hit always deals at least 1 damage, so "1d4 - 1" rolling 0 is still 1.
+    if immediate < 1:
+        parts.append("*Minimum 1 damage on a hit.*")
+    return "\n".join(parts)
 
 
 # --- /lookup character ---------------------------------------------------
