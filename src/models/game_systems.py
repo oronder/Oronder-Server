@@ -9,18 +9,24 @@ actor's data, and the module spreads actor roll data into the payload, so a
 `system` key could already be present and mean something else entirely.
 
 Supporting another system means adding its model to ACTOR_MODELS; the
-endpoint does not change. With one entry this is a plain lookup -- typing
-collapses a one-member Union, so pydantic cannot discriminate it yet -- and it
-can become an Annotated discriminated union once there are two.
+endpoint does not change. Every system other than dnd5e subclasses
+models.shared_actor.SharedActor.
+
+This stays a plain lookup rather than a pydantic discriminated union even now
+there are two members, because of the untagged-means-dnd5e rule: a union would
+need a callable discriminator to supply that default, which says the same
+thing less directly.
 """
 
 from models.actor import Actor
 from models.base_model import OronderBaseModel
+from models.pf2e_actor import Pf2eActor
 
 DEFAULT_GAME_SYSTEM = "dnd5e"
 
 ACTOR_MODELS: dict[str, type[OronderBaseModel]] = {
     "dnd5e": Actor,
+    "pf2e": Pf2eActor,
 }
 
 

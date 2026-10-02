@@ -38,7 +38,8 @@ class SystemActorTable(Base):
 
     @staticmethod
     def from_model(actor: SharedActor, guild_id: int) -> "SystemActorTable":
-        data = actor.model_dump(mode="json")
+        # by_alias: the wire names, e.g. pf2e's `class` rather than `class_`
+        data = actor.model_dump(mode="json", by_alias=True)
         return SystemActorTable(
             id=data["id"],
             guild_id=guild_id,

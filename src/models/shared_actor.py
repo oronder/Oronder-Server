@@ -31,6 +31,9 @@ class SharedSkill(OronderBaseModel):
     # Proficiency rank where the system has one (pf2e: 0 untrained .. 4
     # legendary), else None.
     rank: int | None = None
+    # Player-defined knowledge skills (pf2e lores), so the bot can group them
+    # apart from the system's fixed skill list.
+    lore: bool = False
 
 
 class SharedCurrency(OronderBaseModel):
