@@ -11,8 +11,19 @@ from typing import Annotated
 
 import aiohttp
 from discord import Bot
-from fastapi import Depends, HTTPException, APIRouter, Query, Header, status, FastAPI
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    status,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse
+from pydantic import ValidationError
 from sqlalchemy.exc import NoResultFound
 
 import discord_client
@@ -21,6 +32,7 @@ from database.actor_table import ActorTable
 from database.guild_settings_table import GuildSettingsTable
 from integrations.wikijs import upload_to_wiki, delete_from_wiki
 from models.actor import Actor
+from models.game_systems import UnsupportedGameSystem, actor_model_for
 from models.guild_settings import (
     GuildSettings,
     GuildSettingsInterface,
@@ -237,9 +249,36 @@ async def _post_changelog(header: str, changes: list[str]) -> None:
         logger.info(f"not published ({e}); posted to #{changelog_channel} anyway")
 
 
+async def synced_actor(payload: Annotated[dict, Body()]) -> Actor:
+    """Validate a synced actor against the model for its game system.
+
+    See models.game_systems for the contract. A payload with no game_system
+    tag is dnd5e, so module versions that predate the tag are unaffected.
+    """
+    try:
+        model = actor_model_for(payload)
+    except UnsupportedGameSystem as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        ) from e
+    try:
+        return model.model_validate(payload)
+    except ValidationError as e:
+        # The same 422 FastAPI produced back when this was a typed body
+        # parameter, down to the "body" prefix on each error's location.
+        raise RequestValidationError(
+            [
+                {**error, "loc": ("body", *error["loc"])}
+                for error in e.errors(include_url=False, include_context=False)
+            ]
+        ) from e
+
+
 @router.put("/actor")
 async def upsert_actor(
-    actor: Actor, guild_settings=Depends(guild_auth), session=Depends(session_handler)
+    actor: Annotated[Actor, Depends(synced_actor)],
+    guild_settings=Depends(guild_auth),
+    session=Depends(session_handler),
 ):
     actor_orm = ActorTable.from_model(actor, guild_settings.id)
     session.merge(actor_orm)
