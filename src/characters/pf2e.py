@@ -312,6 +312,9 @@ def character_embed(actor: Pf2eActor) -> Embed:
         )
 
     for entry in b.spellcasting:
+        # An entry with no spells, attack or DC tells the reader nothing.
+        if not entry.spells and entry.attack is None and entry.dc is None:
+            continue
         bits = [
             x
             for x in (
