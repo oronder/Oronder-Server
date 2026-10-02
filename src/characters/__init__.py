@@ -15,11 +15,23 @@ from database.system_actor_table import SystemActorTable
 from models.actor import Actor
 from models.game_systems import ACTOR_MODELS
 from models.shared_actor import SharedActor
-from utils import getLogger
+from utils import getLogger, truncate
 
 logger = getLogger(__name__)
 
 Character = Actor | SharedActor
+
+# Discord rejects an autocomplete choice longer than this, and one bad choice
+# loses the whole list, so long names are offered truncated (utils.truncate,
+# ellipsis and all) and matched back by prefix.
+CHOICE_LIMIT = 100
+_ELLIPSIS = "..."
+
+
+def _name_is(table, name: str):
+    if len(name) == CHOICE_LIMIT and name.endswith(_ELLIPSIS):
+        return table.name.startswith(name[: -len(_ELLIPSIS)], autoescape=True)
+    return table.name == name
 
 
 def find_character(
@@ -29,7 +41,7 @@ def find_character(
     groups.get_actor: an exact name, in this guild, owned by the caller unless
     a GM is asking."""
     for table in (ActorTable, SystemActorTable):
-        stmt = select(table).where(table.name == name, table.guild_id == guild_id)
+        stmt = select(table).where(_name_is(table, name), table.guild_id == guild_id)
         if not gm:
             stmt = stmt.where(discord_id == any_(table.discord_ids))
         try:
@@ -62,7 +74,7 @@ def character_names(
             stmt = stmt.where(discord_id == any_(table.discord_ids))
         with Session() as session:
             names.extend(session.scalars(stmt))
-    return sorted(set(names))[:limit]
+    return [truncate(n, CHOICE_LIMIT) for n in sorted(set(names))[:limit]]
 
 
 def _validate(row) -> Character:
