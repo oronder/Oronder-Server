@@ -11,6 +11,7 @@ from discord import (
 from discord.commands import option
 
 from database.guild_settings_table import GuildSettingsTable
+from characters import find_character, pf2e
 from discord_markdown_converter import md
 import dnd
 from dnd import SKILLS, TOOLS, mod_to_str, items
@@ -27,7 +28,6 @@ from groups import (
     drop_subcommands,
     character_description,
     display_ephemeral,
-    get_actor,
     invite_link,
     display_choices,
     DISPLAY_PRIVATE,
@@ -43,6 +43,7 @@ from groups.autocomplete import (
     detail_autocomplete,
 )
 from models.actor import Item
+from models.pf2e_actor import Pf2eActor
 from models.guild_settings import Subscription
 from models.socket_aware_bot import SocketAwareBot, SocketAwareApplicationContext
 from routers.socket_namespace import SocketNamespace
@@ -202,9 +203,25 @@ async def lookup_character(
         )
         return
 
-    actor, error = get_actor(character, ctx.user.id, ctx.guild_id, gm)
+    actor, error = find_character(character, ctx.user.id, ctx.guild_id, gm)
     if error:
         await ctx.respond(**error)
+        return
+
+    if isinstance(actor, Pf2eActor):
+        if detail:
+            # dnd5e fetches item descriptions from Foundry by item id; the pf2e
+            # payload carries no items yet.
+            await ctx.respond(
+                **logger.err_msg(
+                    "Item details aren't available for pf2e characters yet.",
+                    ctx.guild_id,
+                )
+            )
+            return
+        await respond_with_long_embed(
+            ctx, pf2e.character_embed(actor), ephemeral=display == DISPLAY_PRIVATE
+        )
         return
 
     embed = Embed(

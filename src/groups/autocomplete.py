@@ -18,6 +18,8 @@ from dnd import backgrounds as backgrounds_data
 from dnd.items import attack_modes_reversed
 from models.actor import Tools, Details, Actor, Attack, Spell
 from utils import timezones, SUPER_ADMIN_USER_IDS, getLogger, truncate
+from characters import character_for_autocomplete, character_names, pf2e
+from models.pf2e_actor import Pf2eActor
 
 logger = getLogger(__name__)
 
@@ -95,42 +97,20 @@ def standby_actor_autocomplete(ctx: AutocompleteContext):
 
 
 def actor_autocomplete(ctx: AutocompleteContext):
-    # noinspection PyTypeChecker,PyUnresolvedReferences
-    stmt = (
-        select(ActorTable.name)
-        .where(
-            and_(
-                ctx.interaction.user.id == any_(ActorTable.discord_ids),
-                ActorTable.guild_id == ctx.interaction.guild_id,
-                ActorTable.name.icontains(ctx.value),
-            )
-        )
-        .limit(25)
+    # Every game system's characters, not just dnd5e's.
+    return (
+        character_names(ctx.interaction.user.id, ctx.interaction.guild_id, ctx.value)
+        or character_not_found
     )
-
-    with Session() as session:
-        actor_names = session.scalars(stmt)
-
-    return actor_names or character_not_found
 
 
 def actor_gm_autocomplete(ctx: AutocompleteContext):
-    # noinspection PyTypeChecker,PyUnresolvedReferences
-    stmt = (
-        select(ActorTable.name)
-        .where(
-            and_(
-                ActorTable.guild_id == ctx.interaction.guild_id,
-                ActorTable.name.icontains(ctx.value),
-            )
+    return (
+        character_names(
+            ctx.interaction.user.id, ctx.interaction.guild_id, ctx.value, gm=True
         )
-        .limit(25)
+        or character_not_found
     )
-
-    with Session() as session:
-        actor_names = session.scalars(stmt)
-
-    return actor_names or character_not_found
 
 
 def xp_adjustment_comment_autocomplete(ctx: AutocompleteContext):
@@ -230,6 +210,16 @@ def attack_autocomplete(ctx: AutocompleteContext):
     with Session() as session:
         attacks = session.scalars(stmt).one_or_none()
 
+    if attacks is None:
+        character = character_for_autocomplete(
+            ctx.options["character"],
+            ctx.interaction.user.id,
+            ctx.interaction.guild_id,
+        )
+        if isinstance(character, Pf2eActor):
+            return search(ctx.value, pf2e.attack_names(character), sorted)
+        return character_not_found
+
     return search(ctx.value, [Attack.model_validate(w).name for w in attacks], sorted)
 
 
@@ -302,6 +292,9 @@ def spell_level_autocomplete(ctx: AutocompleteContext):
     )
     with Session() as session:
         res = session.scalar(stmt)
+    if res is None:
+        # Not a dnd5e character; spell levels are a dnd5e concept.
+        return []
     actor = Actor.model_validate(res)
     spellcaster_lvl = actor.attributes.spellcaster
     if spellcaster_lvl < 0:
@@ -329,7 +322,17 @@ def attack_mode_autocomplete(ctx: ApplicationContext):
     )
 
     with Session() as session:
-        weapons = session.scalars(stmt).one()
+        weapons = session.scalars(stmt).one_or_none()
+
+    if weapons is None:
+        character = character_for_autocomplete(
+            ctx.options["character"],
+            ctx.interaction.user.id,
+            ctx.interaction.guild_id,
+        )
+        if isinstance(character, Pf2eActor):
+            return pf2e.steps_for(character, ctx.options["weapon"] or "")
+        return []
 
     weapon = next((w for w in weapons if w["name"] == ctx.options["weapon"]), {})
     return [attack_modes_reversed[m] for m in weapon.get("attack_modes", [])]
@@ -356,6 +359,13 @@ def stat_autocomplete(ctx: AutocompleteContext):
         res = session.scalars(stmt).one_or_none()
 
     if not res:
+        character = character_for_autocomplete(
+            ctx.options["character"],
+            ctx.interaction.user.id,
+            ctx.interaction.guild_id,
+        )
+        if isinstance(character, Pf2eActor):
+            return search(ctx.value, pf2e.rollables(character).keys(), sorted)
         return character_not_found
 
     tools = TypeAdapter(Tools).validate_python(res)
