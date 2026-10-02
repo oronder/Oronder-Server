@@ -7,7 +7,7 @@ incoming roll handler speaks dnd5e's roll API, which a pf2e actor lacks.
 import re
 
 import d20
-from discord import Embed, EmbedField, EmbedFooter
+from discord import Color, Embed, EmbedField, EmbedFooter
 
 from models.pf2e_actor import Pf2eActor, Pf2eStrike
 from utils import truncate
@@ -235,7 +235,13 @@ def character_embed(actor: Pf2eActor) -> Embed:
     description = f"Level {b.level} {identity}".strip()
     if b.background:
         description += f" ({b.background})"
-    embed = Embed(title=actor.name, description=description)
+    # Red at 0 HP, as dnd5e's sheet is when dead. pf2e conditions (dying,
+    # unconscious) aren't in the v1 payload, so HP is the only signal.
+    embed = Embed(
+        title=actor.name,
+        description=description,
+        color=Color.red() if actor.hp.value <= 0 else None,
+    )
     if actor.portrait_url and actor.portrait_url.startswith("http"):
         embed.set_thumbnail(url=actor.portrait_url)
 
