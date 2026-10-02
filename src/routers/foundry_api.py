@@ -29,9 +29,11 @@ from sqlalchemy.exc import NoResultFound
 import discord_client
 from database import Session
 from database.actor_table import ActorTable
+from database.system_actor_table import SystemActorTable
 from database.guild_settings_table import GuildSettingsTable
 from integrations.wikijs import upload_to_wiki, delete_from_wiki
 from models.actor import Actor
+from models.base_model import OronderBaseModel
 from models.game_systems import UnsupportedGameSystem, actor_model_for
 from models.guild_settings import (
     GuildSettings,
@@ -249,7 +251,7 @@ async def _post_changelog(header: str, changes: list[str]) -> None:
         logger.info(f"not published ({e}); posted to #{changelog_channel} anyway")
 
 
-async def synced_actor(payload: Annotated[dict, Body()]) -> Actor:
+async def synced_actor(payload: Annotated[dict, Body()]) -> OronderBaseModel:
     """Validate a synced actor against the model for its game system.
 
     See models.game_systems for the contract. A payload with no game_system
@@ -276,14 +278,19 @@ async def synced_actor(payload: Annotated[dict, Body()]) -> Actor:
 
 @router.put("/actor")
 async def upsert_actor(
-    actor: Annotated[Actor, Depends(synced_actor)],
+    actor: Annotated[OronderBaseModel, Depends(synced_actor)],
     guild_settings=Depends(guild_auth),
     session=Depends(session_handler),
 ):
-    actor_orm = ActorTable.from_model(actor, guild_settings.id)
-    session.merge(actor_orm)
+    # dnd5e keeps its own table, shaped like dnd5e's roll data; every other
+    # system shares system_actors. See models.game_systems.
+    if isinstance(actor, Actor):
+        session.merge(ActorTable.from_model(actor, guild_settings.id))
+    else:
+        session.merge(SystemActorTable.from_model(actor, guild_settings.id))
     session.commit()
-    if guild_settings.id in WIKIJS_GUILD_IDS:
+    # The wiki export renders a dnd5e sheet, so it only knows dnd5e actors.
+    if isinstance(actor, Actor) and guild_settings.id in WIKIJS_GUILD_IDS:
         logger.warning(f"Upserting {actor.name} to wiki!")
         wikijs_task_queue.add_task(upload_to_wiki, actor)
 
@@ -292,23 +299,31 @@ async def upsert_actor(
 async def delete_actor(
     actor_id: str, guild_settings=Depends(guild_auth), session=Depends(session_handler)
 ):
+    # The id alone does not say which system the actor belongs to, so look in
+    # both tables: dnd5e's, then everyone else's.
     try:
         actor = (
             session.query(ActorTable)
             .filter_by(id=actor_id, guild_id=guild_settings.id)
             .one()
         )
-
         if guild_settings.id in WIKIJS_GUILD_IDS:
             logger.warning(f"Deleting {actor.name} from wiki!")
             wikijs_task_queue.add_task(delete_from_wiki, Actor.model_validate(actor))
-
-        session.delete(actor)
-        session.commit()
     except NoResultFound:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Actor {actor_id} not found"
+        actor = (
+            session.query(SystemActorTable)
+            .filter_by(id=actor_id, guild_id=guild_settings.id)
+            .one_or_none()
         )
+        if actor is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Actor {actor_id} not found",
+            ) from None
+
+    session.delete(actor)
+    session.commit()
 
 
 @router.get("/init", response_class=HTMLResponse)
