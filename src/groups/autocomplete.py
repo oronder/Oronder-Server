@@ -9,7 +9,7 @@ from sqlalchemy import select, func, or_, any_, and_
 from sqlalchemy.exc import ArgumentError
 
 import dnd
-from database import Session, CampaignTable, XpAdjustmentsTable
+from database import Session, CampaignTable, XpAdjustmentsTable, newest_first
 from database.actor_table import ActorTable
 from database.guild_settings_table import GuildSettingsTable
 from database.missions import MissionTable
@@ -208,7 +208,7 @@ def attack_autocomplete(ctx: AutocompleteContext):
     )
 
     with Session() as session:
-        attacks = session.scalars(stmt).one_or_none()
+        attacks = session.scalars(stmt.order_by(newest_first(ActorTable))).first()
 
     if attacks is None:
         character = character_for_autocomplete(
@@ -236,7 +236,9 @@ def detail_autocomplete(ctx: AutocompleteContext):
     )
 
     with Session() as session:
-        details = Details.model_validate(session.scalars(stmt).one_or_none())
+        details = Details.model_validate(
+            session.scalars(stmt.order_by(newest_first(ActorTable))).first()
+        )
 
     return (
         search(
@@ -265,7 +267,7 @@ def detail_gm_autocomplete(ctx: AutocompleteContext):
     )
 
     with Session() as session:
-        details = session.scalars(stmt).one_or_none()
+        details = session.scalars(stmt.order_by(newest_first(ActorTable))).first()
 
     return (
         search(
@@ -291,7 +293,7 @@ def spell_level_autocomplete(ctx: AutocompleteContext):
         ActorTable.guild_id == ctx.interaction.guild_id,
     )
     with Session() as session:
-        res = session.scalar(stmt)
+        res = session.scalar(stmt.order_by(newest_first(ActorTable)))
     if res is None:
         # Not a dnd5e character; spell levels are a dnd5e concept.
         return []
@@ -322,7 +324,7 @@ def attack_mode_autocomplete(ctx: ApplicationContext):
     )
 
     with Session() as session:
-        weapons = session.scalars(stmt).one_or_none()
+        weapons = session.scalars(stmt.order_by(newest_first(ActorTable))).first()
 
     if weapons is None:
         character = character_for_autocomplete(
@@ -356,7 +358,7 @@ def stat_autocomplete(ctx: AutocompleteContext):
     )
 
     with Session() as session:
-        res = session.scalars(stmt).one_or_none()
+        res = session.scalars(stmt.order_by(newest_first(ActorTable))).first()
 
     if not res:
         character = character_for_autocomplete(

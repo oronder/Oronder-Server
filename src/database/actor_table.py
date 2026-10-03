@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import List
 
-from sqlalchemy import String, BigInteger
+from sqlalchemy import String, BigInteger, DateTime
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column
@@ -35,6 +36,10 @@ class ActorTable(Base):
     )
     equipment: Mapped[List[str]] = mapped_column(
         MutableList.as_mutable(ARRAY(String)), default_factory=list
+    )
+    # Set by every PUT /actor; see database.newest_row.
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
     )
 
     @staticmethod

@@ -1,4 +1,6 @@
-from sqlalchemy import BigInteger, String
+from datetime import datetime
+
+from sqlalchemy import BigInteger, DateTime, String
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import Mapped, mapped_column
@@ -34,6 +36,10 @@ class SystemActorTable(Base):
     body: Mapped[dict] = mapped_column(JSONB, nullable=True, default=None)
     discord_ids: Mapped[list[int]] = mapped_column(
         MutableList.as_mutable(ARRAY(BigInteger)), nullable=False, default_factory=list
+    )
+    # Set by every PUT /actor; see database.newest_row.
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
     )
 
     @staticmethod

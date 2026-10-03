@@ -19,11 +19,18 @@ from discord.commands import option
 from discord.ext.commands import bot_has_guild_permissions
 from discord.utils import format_dt, snowflake_time
 from sqlalchemy import select, func, any_, text, and_
-from sqlalchemy.exc import NoResultFound
+from sqlalchemy.exc import MultipleResultsFound, NoResultFound
 from tabulate import tabulate
 
 import dnd
-from database import Session, CampaignTable, XpAdjustmentsTable
+from database import (
+    Session,
+    CampaignTable,
+    XpAdjustmentsTable,
+    ambiguous_character,
+    newest_first,
+    newest_row,
+)
 from database.actor_table import ActorTable
 from database.game_master_table import GameMasterTable
 from database.guild_settings_table import GuildSettingsTable
@@ -388,16 +395,14 @@ class GM(Cog):
                 else:
                     old_pc_name = None
                 try:
-                    new_pc: ActorTable = (
-                        session.query(ActorTable)
-                        .where(
-                            and_(
-                                ActorTable.guild_id == ctx.guild_id,
-                                ActorTable.name == gm_pc,
-                                ctx.interaction.user.id == any_(ActorTable.discord_ids),
-                            )
-                        )
-                        .one()
+                    new_pc: ActorTable = newest_row(
+                        session,
+                        select(ActorTable).where(
+                            ActorTable.guild_id == ctx.guild_id,
+                            ActorTable.name == gm_pc,
+                            ctx.interaction.user.id == any_(ActorTable.discord_ids),
+                        ),
+                        ActorTable,
                     )
 
                     embed.add_field(
@@ -406,6 +411,8 @@ class GM(Cog):
                     mission.gm_pc = new_pc.id
                 except NoResultFound:
                     errors.append(f"**{gm_pc}** not found.")
+                except MultipleResultsFound:
+                    errors.append(ambiguous_character(gm_pc))
 
         if gm:
             gm_role = ctx.guild.get_role(guild_settings.gm_role_id)
@@ -590,7 +597,9 @@ class GM(Cog):
 
         with Session() as session:
             pc_id = session.scalar(
-                select(ActorTable.id).filter_by(guild_id=ctx.guild_id, name=actor_name)
+                select(ActorTable.id)
+                .filter_by(guild_id=ctx.guild_id, name=actor_name)
+                .order_by(newest_first(ActorTable))
             )
             session.add(
                 XpAdjustmentsTable(
@@ -690,7 +699,9 @@ class GM(Cog):
         with Session() as session:
             actor = Actor.model_validate(
                 session.scalar(
-                    select(ActorTable).filter_by(guild_id=ctx.guild_id, name=actor_name)
+                    select(ActorTable)
+                    .filter_by(guild_id=ctx.guild_id, name=actor_name)
+                    .order_by(newest_first(ActorTable))
                 )
             )
             adjustments = session.scalars(

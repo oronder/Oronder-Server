@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy import any_, select
 from sqlalchemy.exc import MultipleResultsFound, NoResultFound, SQLAlchemyError
 
-from database import Session
+from database import Session, ambiguous_character, newest_first, newest_row
 from database.actor_table import ActorTable
 from database.system_actor_table import SystemActorTable
 from models.actor import Actor
@@ -46,14 +46,12 @@ def find_character(
             stmt = stmt.where(discord_id == any_(table.discord_ids))
         try:
             with Session() as session:
-                row = session.scalars(stmt).one()
+                row = newest_row(session, stmt, table)
                 return _validate(row), None
         except NoResultFound:
             continue
         except MultipleResultsFound:
-            return None, logger.err_msg(
-                "Duplicate character names. Results ambiguous!", guild_id
-            )
+            return None, logger.err_msg(ambiguous_character(name), guild_id)
         except (SQLAlchemyError, ValidationError) as e:
             return None, logger.err_msg(str(e), guild_id)
     return None, logger.err_msg(f"Character {name} not found!", guild_id)
@@ -113,6 +111,7 @@ def character_for_autocomplete(
         stmt = (
             select(table)
             .where(table.guild_id == guild_id, table.name.icontains(name))
+            .order_by(newest_first(table))
             .limit(1)
         )
         if not gm:

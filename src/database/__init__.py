@@ -11,10 +11,12 @@ from sqlalchemy import (
     UUID,
     create_engine,
     func,
+    text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.mutable import MutableList
+from sqlalchemy.exc import MultipleResultsFound, NoResultFound
 from sqlalchemy.orm import (
     sessionmaker,
     mapped_column,
@@ -123,3 +125,49 @@ def init_db():
         Base.metadata.create_all(
             session.get_bind().engine
         )
+        # create_all never adds a column to a table that already exists, so
+        # columns added since a table was created are added here.
+        for table in ("actors", "system_actors"):
+            session.execute(
+                text(
+                    f"ALTER TABLE {table} "
+                    "ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMPTZ"
+                )
+            )
+        session.commit()
+
+
+def newest_first(table):
+    """Order copies of one character most recently synced first.
+
+    The same character can be stored more than once under different actor ids
+    -- synced from two worlds, or deleted and re-created in Foundry. Copies
+    synced before last_synced_at existed have none and sort last."""
+    return table.last_synced_at.desc().nulls_last()
+
+
+def newest_row(session, stmt, table):
+    """The one row stmt selects or, when it selects several copies of a
+    character, the one synced most recently.
+
+    Raises NoResultFound, or MultipleResultsFound when no single copy was
+    synced last -- none of them since last_synced_at was added."""
+    rows = session.scalars(stmt.order_by(newest_first(table)).limit(2)).all()
+    if not rows:
+        raise NoResultFound()
+    if len(rows) == 1:
+        return rows[0]
+    newest, runner_up = rows
+    if newest.last_synced_at and (
+        runner_up.last_synced_at is None
+        or newest.last_synced_at > runner_up.last_synced_at
+    ):
+        return newest
+    raise MultipleResultsFound()
+
+
+def ambiguous_character(name: str) -> str:
+    return (
+        f"More than one character is named **{name}**. "
+        "Sync the one you mean from Foundry and Oronder will use it."
+    )

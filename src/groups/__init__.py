@@ -4,7 +4,7 @@ from discord import ApplicationContext
 from sqlalchemy import select, any_
 from sqlalchemy.exc import NoResultFound, MultipleResultsFound
 
-from database import Session
+from database import Session, ambiguous_character, newest_row
 from database.actor_table import ActorTable
 from database.guild_settings_table import GuildSettingsTable
 from database.missions import MissionTable
@@ -73,14 +73,12 @@ def get_actor(
 
     try:
         with Session() as session:
-            return Actor.model_validate(session.scalars(stmt).one()), None
+            return Actor.model_validate(newest_row(session, stmt, ActorTable)), None
 
     except NoResultFound:
         return None, logger.err_msg(f"Character {character} not found!", guild_id)
     except MultipleResultsFound:
-        return None, logger.err_msg(
-            "Duplicate character names. Results ambiguous!", guild_id
-        )
+        return None, logger.err_msg(ambiguous_character(character), guild_id)
 
     except Exception as e:
         return None, logger.err_msg(str(e), guild_id)
