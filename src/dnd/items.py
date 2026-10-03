@@ -712,7 +712,8 @@ def generate_item_embed(item_name):
         + join_list(
             [
                 item["type_string"],
-                item["rarity"].capitalize(),
+                # Gems and art objects have no rarity.
+                (item["rarity"] or "").capitalize(),
                 *[
                     properties[code]
                     for code in map(dnd.bare_code, item.get("property", []))

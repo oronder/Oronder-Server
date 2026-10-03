@@ -76,7 +76,11 @@ class Lookups(Cog):
     async def item_lookup(self, ctx: ApplicationContext, item: str, display: str):
         embed, error = generate_item_embed(item)
         if embed:
-            await ctx.respond(embed=embed, ephemeral=display == DISPLAY_PRIVATE)
+            # A few items (the Decks of Many Things, Sword of Kas, ...) have
+            # more fields than one embed may hold.
+            await respond_with_long_embed(
+                ctx, embed, ephemeral=display == DISPLAY_PRIVATE
+            )
         else:
             await ctx.respond(**logger.err_msg(error, ctx.guild_id))
 
