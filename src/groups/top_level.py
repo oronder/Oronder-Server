@@ -17,9 +17,8 @@ from dnd import (
 )
 from dnd.items import attack_modes
 from dnd import rules
-from characters import find_character, pf2e
+from characters import commands_for, find_character
 from groups import get_actor, DISPLAY_PRIVATE, invite_link
-from models.pf2e_actor import Pf2eActor
 from models.actor import Spell
 from models.guild_settings import Subscription
 from routers.socket_namespace import SocketNamespace
@@ -41,11 +40,11 @@ async def roll(
         await ctx.respond(**error)
         return
 
-    if isinstance(actor, Pf2eActor):
+    if system := commands_for(actor):
         # Rolled here, never relayed to Foundry: the module's roll handler only
-        # knows dnd5e. pf2e saves are stats in their own right, so `save` is
-        # not needed.
-        rolled = pf2e.roll(actor, stat, advantage)
+        # knows dnd5e. pf2e saves are stats in their own right, and CoC7 has
+        # none, so `save` is not needed.
+        rolled = system.roll(actor, stat, advantage)
         if rolled is None:
             await ctx.respond(
                 **logger.err_msg(f"Unrecognized stat **{stat}**.", ctx.guild_id)
@@ -140,10 +139,10 @@ async def roll_attack(
         await ctx.respond(**error)
         return
 
-    if isinstance(actor, Pf2eActor):
+    if system := commands_for(actor):
         # attack_mode carries the attack-penalty step for pf2e, e.g.
         # "2nd attack (+3)"; spell_level does not apply.
-        embed = pf2e.attack(actor, attack_name, attack_mode, advantage)
+        embed = system.attack(actor, attack_name, attack_mode, advantage)
         if embed is None:
             await ctx.respond(
                 **logger.err_msg(f"Attack {attack_name} not found!", ctx.guild_id)

@@ -13,13 +13,14 @@ endpoint does not change. Every system other than dnd5e subclasses
 models.shared_actor.SharedActor.
 
 This stays a plain lookup rather than a pydantic discriminated union even now
-there are two members, because of the untagged-means-dnd5e rule: a union would
+there are several members, because of the untagged-means-dnd5e rule: a union would
 need a callable discriminator to supply that default, which says the same
 thing less directly.
 """
 
 from models.actor import Actor
 from models.base_model import OronderBaseModel
+from models.coc7_actor import CoC7Actor
 from models.pf2e_actor import Pf2eActor
 
 DEFAULT_GAME_SYSTEM = "dnd5e"
@@ -27,6 +28,8 @@ DEFAULT_GAME_SYSTEM = "dnd5e"
 ACTOR_MODELS: dict[str, type[OronderBaseModel]] = {
     "dnd5e": Actor,
     "pf2e": Pf2eActor,
+    # Foundry's own system id, capitals and all.
+    "CoC7": CoC7Actor,
 }
 
 
