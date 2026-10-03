@@ -17,7 +17,9 @@ from dnd import (
 )
 from dnd.items import attack_modes
 from dnd import rules
+from characters import find_character, pf2e
 from groups import get_actor, DISPLAY_PRIVATE, invite_link
+from models.pf2e_actor import Pf2eActor
 from models.actor import Spell
 from models.guild_settings import Subscription
 from routers.socket_namespace import SocketNamespace
@@ -34,9 +36,28 @@ async def roll(
     save: bool,
     socket_namespace: SocketNamespace,
 ):
-    actor, error = get_actor(character, ctx.user.id, ctx.guild_id)
+    actor, error = find_character(character, ctx.user.id, ctx.guild_id)
     if error:
         await ctx.respond(**error)
+        return
+
+    if isinstance(actor, Pf2eActor):
+        # Rolled here, never relayed to Foundry: the module's roll handler only
+        # knows dnd5e. pf2e saves are stats in their own right, so `save` is
+        # not needed.
+        rolled = pf2e.roll(actor, stat, advantage)
+        if rolled is None:
+            await ctx.respond(
+                **logger.err_msg(f"Unrecognized stat **{stat}**.", ctx.guild_id)
+            )
+            return
+        heading, result = rolled
+        await ctx.respond(
+            embed=Embed(
+                fields=[EmbedField(heading, result)],
+                footer=EmbedFooter(actor.name, actor.portrait_url),
+            )
+        )
         return
 
     stat_type, stat_descriptor = (
@@ -114,9 +135,21 @@ async def roll_attack(
     spell_level: int | None,
     attack_mode: str | None,
 ):
-    actor, error = get_actor(actor_name, ctx.interaction.user.id, ctx.guild_id)
+    actor, error = find_character(actor_name, ctx.interaction.user.id, ctx.guild_id)
     if error:
         await ctx.respond(**error)
+        return
+
+    if isinstance(actor, Pf2eActor):
+        # attack_mode carries the attack-penalty step for pf2e, e.g.
+        # "2nd attack (+3)"; spell_level does not apply.
+        embed = pf2e.attack(actor, attack_name, attack_mode, advantage)
+        if embed is None:
+            await ctx.respond(
+                **logger.err_msg(f"Attack {attack_name} not found!", ctx.guild_id)
+            )
+            return
+        await ctx.respond(embed=embed)
         return
 
     attack = next((a for a in actor.weapons if a.name == attack_name), None)
