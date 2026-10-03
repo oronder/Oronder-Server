@@ -123,7 +123,10 @@ allowed_sources = _resolve_editions(
             "BMT",  # 2023-11-14  The Book of Many Things
             "XPHB",  # 2024-09-17  Player's Handbook (2024)
             "XDMG",  # 2024-11-12  Dungeon Master's Guide (2024)
+            "XMM",  # 2025-02-18  Monster Manual (2025)
             "FRHoF",  # 2025-11-11  Forgotten Realms: Heroes of Faerun
+            "FRAiF",  # 2025-11-11  Forgotten Realms: Adventures in Faerun
+            "NF",  # 2025-11-11  Netheril's Fall
             "LFL",  # 2025-11-18  Lorwyn: First Light
             "EFA",  # 2025-12-09  Eberron: Forge of the Artificer
             "RHW",  # 2026-06-16  Ravenloft: The Horrors Within

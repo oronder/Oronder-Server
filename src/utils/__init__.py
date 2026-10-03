@@ -13,7 +13,6 @@ from urllib.parse import urlparse
 import aiohttp
 import dateparser
 import httpx
-import numpy as np
 import pytz
 import pytzdata
 import tabulate as tabulate_lib
@@ -346,41 +345,36 @@ def invalid(e: Embed):
     return len(e.fields) > 25 or len(e) > 6000
 
 
-def field_index_to_pop(e: Embed):
-    return (
-        next(
-            idx
-            for idx, cum in reversed(
-                list(
-                    enumerate(
-                        np.array([len(f.value) for f in e.fields]).cumsum().tolist()
-                    )
-                )
-            )
-            if cum < 6000
-        )
-        if len(e) > 6000
-        else 25
-    )
+def split_embed(embed: Embed) -> list[Embed]:
+    """Pack the embed's fields, in order, into as many embeds as Discord's
+    limits (25 fields, 6000 characters) require. The first keeps the title and
+    description; the caller moves the footer and image to the last."""
+    if not invalid(embed):
+        return [embed]
+    # The footer ends up on whichever embed is last, so leave room for it on
+    # every one of them.
+    budget = 6000 - len((embed.footer and embed.footer.text) or "")
+    fields = list(embed.fields)
+    embed.clear_fields()
+    embeds = [embed]
+    for field in fields:
+        cur = embeds[-1]
+        if (
+            len(cur.fields) == 25
+            or len(cur) + len(field.name) + len(field.value) > budget
+        ):
+            cur = Embed(color=embed.color)
+            embeds.append(cur)
+        cur.append_field(field)
+    return embeds
 
 
 async def respond_with_long_embed(ctx: ApplicationContext, embed: Embed, **kwargs):
-    embeds = [embed]
-    while invalid(embed):
-        cur = Embed(color=embed.color)
-        field_index = field_index_to_pop(embed)
-        while (
-            invalid(embed)
-            and len(cur.fields) < 25
-            and len(cur) + len(embed.fields[field_index].value) < 6000
-        ):
-            cur.append_field(embed.fields[field_index])
-            embed.remove_field(field_index)
-            field_index = field_index_to_pop(embed)
-        embeds.append(cur)
+    embeds = split_embed(embed)
 
     if len(embeds) > 1:
-        if embed.footer and embed.footer.text and embed.footer.icon_url:
+        # Item and spell footers carry the source but no icon; move them too.
+        if embed.footer and embed.footer.text:
             embeds[-1].set_footer(
                 text=embed.footer.text, icon_url=embed.footer.icon_url
             )
