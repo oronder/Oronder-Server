@@ -105,7 +105,7 @@ matters; leave any of them blank for the default shown:
 
 | Variable | Default |
 | --- | --- |
-| `DND5E_ALLOWED_SOURCES` | `XGE,GoS,EGW,TCE,VRGR,FTD,BGG,CoA,BMT,XPHB,XDMG,FRHoF,LFL,EFA,RHW,AU` |
+| `DND5E_ALLOWED_SOURCES` | `XGE,GoS,EGW,TCE,VRGR,FTD,BGG,CoA,BMT,XPHB,XDMG,XMM,FRHoF,FRAiF,NF,LFL,EFA,RHW,AU` |
 | `DND5E_ALLOWED_CLASSES` | `Artificer,Bard,Cleric,Druid,Monk,Paladin,Ranger,Sorcerer,Warlock,Wizard` |
 | `DND5E_DISALLOWED_AGES` | `futuristic,renaissance,modern` |
 
