@@ -6,6 +6,7 @@ import secrets
 
 import discord
 import time
+from datetime import UTC, datetime
 from pprint import pformat
 from typing import Annotated
 
@@ -288,9 +289,13 @@ async def upsert_actor(
     # dnd5e keeps its own table, shaped like dnd5e's roll data; every other
     # system shares system_actors. See models.game_systems.
     if isinstance(actor, Actor):
-        session.merge(ActorTable.from_model(actor, guild_settings.id))
+        row = ActorTable.from_model(actor, guild_settings.id)
     else:
-        session.merge(SystemActorTable.from_model(actor, guild_settings.id))
+        row = SystemActorTable.from_model(actor, guild_settings.id)
+    # When one character is stored under several actor ids, the copy synced
+    # last is the one commands use.
+    row.last_synced_at = datetime.now(UTC)
+    session.merge(row)
     session.commit()
     # The wiki export renders a dnd5e sheet, so it only knows dnd5e actors.
     if isinstance(actor, Actor) and guild_settings.id in WIKIJS_GUILD_IDS:

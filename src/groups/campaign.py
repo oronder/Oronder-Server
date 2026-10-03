@@ -14,7 +14,7 @@ from discord.ext.commands import Bot
 from discord.utils import generate_snowflake
 from sqlalchemy import select
 
-from database import Session, CampaignTable
+from database import Session, CampaignTable, newest_first
 from database.actor_table import ActorTable
 from groups import is_gm, DISABLE
 from groups.autocomplete import (
@@ -285,7 +285,9 @@ class Campaign(Cog):
     ):
         with Session() as session:
             pc_id = session.scalar(
-                select(ActorTable.id).filter_by(guild_id=ctx.guild_id, name=actor_name)
+                select(ActorTable.id)
+                .filter_by(guild_id=ctx.guild_id, name=actor_name)
+                .order_by(newest_first(ActorTable))
             )
             if not pc_id:
                 await ctx.respond(
@@ -344,7 +346,9 @@ class Campaign(Cog):
     ):
         with Session() as session:
             pc_id = session.scalar(
-                select(ActorTable.id).filter_by(guild_id=ctx.guild_id, name=actor_name)
+                select(ActorTable.id)
+                .filter_by(guild_id=ctx.guild_id, name=actor_name)
+                .order_by(newest_first(ActorTable))
             )
             if not pc_id:
                 await ctx.respond(
