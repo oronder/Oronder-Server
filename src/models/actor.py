@@ -428,7 +428,11 @@ class Actor(OronderBaseModel):
                 for c, d in classes
                 if c == "bard"
                 and d["levels"] >= 3
-                and d["subclass"]["identifier"] == "college-of-eloquence"
+                # A bard can reach level 3 with no subclass recorded (10 in
+                # production), and this runs for every roll, so indexing it
+                # made every /roll crash for them, not just Deception.
+                and (d.get("subclass") or {}).get("identifier")
+                == "college-of-eloquence"
             ),
             False,
         )
