@@ -18,10 +18,11 @@ ENV UV_INSTALL_DIR=/root/.local/bin \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Copy project metadata first for better layer caching
-COPY pyproject.toml /app/
+COPY pyproject.toml uv.lock /app/
 
-# Sync dependencies into a local venv (no dev deps)
-RUN uv sync --no-dev
+# Sync dependencies into a local venv (no dev deps), exactly as locked. --frozen
+# fails the build if uv.lock is out of date with pyproject.toml: run `uv lock`.
+RUN uv sync --frozen --no-dev
 
 # Ensure the venv is used by default
 ENV VIRTUAL_ENV=/app/.venv \
