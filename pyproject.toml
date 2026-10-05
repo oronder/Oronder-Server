@@ -34,7 +34,7 @@ dependencies = [
     # Transitive via fastapi, but pinned here too, so `uv lock --upgrade` can't
     # move it: fastapi 0.141 accepts starlette <2, and 1.x already removed an
     # API we use.
-    "starlette==1.6.0",
+    "starlette==1.7.0",
     #  "sqlmodel==0.0.24",
     "tabulate==0.10.0",
     "uvicorn==0.53.0",
