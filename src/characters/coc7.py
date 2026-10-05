@@ -65,7 +65,13 @@ class D100:
     units: int
 
     def __str__(self) -> str:
-        text = f"`{self.result}` vs {self.target}: **{LEVEL_NAMES[self.level]}**"
+        # The half and fifth a Hard or Extreme success needs, as CoC7 sheets
+        # show them.
+        text = (
+            f"`{self.result}` vs {self.target}"
+            f" ({self.target // 2}/{self.target // 5}):"
+            f" **{LEVEL_NAMES[self.level]}**"
+        )
         if len(self.tens) > 1:
             text += (
                 f"\n*tens {' · '.join(f'{t:02d}' for t in self.tens)},"
