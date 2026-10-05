@@ -3,7 +3,13 @@
 dnd5e characters live in `actors` and the rest in `system_actors` (see
 models.game_systems). Commands that support more than dnd5e look characters up
 here; everything else keeps using groups.get_actor, which only knows dnd5e.
+
+Each system other than dnd5e has a module here (pf2e, coc7) with the same
+functions -- rollables, roll, attack_names, steps_for, attack and
+character_embed -- and commands_for picks the right one.
 """
+
+from types import ModuleType
 
 from pydantic import ValidationError
 from sqlalchemy import any_, select
@@ -20,6 +26,18 @@ from utils import getLogger, truncate
 logger = getLogger(__name__)
 
 Character = Actor | SharedActor
+
+
+def commands_for(character: Character | None) -> ModuleType | None:
+    """The module that rolls and displays this character, or None for dnd5e,
+    whose commands live in the command handlers themselves."""
+    # Imported here: both modules import from this package's models.
+    from characters import coc7, pf2e
+
+    if not isinstance(character, SharedActor):
+        return None
+    return {"pf2e": pf2e, "CoC7": coc7}.get(character.game_system)
+
 
 # Discord rejects an autocomplete choice longer than this, and one bad choice
 # loses the whole list, so long names are offered truncated (utils.truncate,

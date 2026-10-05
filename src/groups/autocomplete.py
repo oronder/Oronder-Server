@@ -18,8 +18,7 @@ from dnd import backgrounds as backgrounds_data
 from dnd.items import attack_modes_reversed
 from models.actor import Tools, Details, Actor, Attack, Spell
 from utils import timezones, SUPER_ADMIN_USER_IDS, getLogger, truncate
-from characters import character_for_autocomplete, character_names, pf2e
-from models.pf2e_actor import Pf2eActor
+from characters import character_for_autocomplete, character_names, commands_for
 
 logger = getLogger(__name__)
 
@@ -216,8 +215,8 @@ def attack_autocomplete(ctx: AutocompleteContext):
             ctx.interaction.user.id,
             ctx.interaction.guild_id,
         )
-        if isinstance(character, Pf2eActor):
-            return search(ctx.value, pf2e.attack_names(character), sorted)
+        if system := commands_for(character):
+            return search(ctx.value, system.attack_names(character), sorted)
         return character_not_found
 
     return search(ctx.value, [Attack.model_validate(w).name for w in attacks], sorted)
@@ -332,8 +331,8 @@ def attack_mode_autocomplete(ctx: ApplicationContext):
             ctx.interaction.user.id,
             ctx.interaction.guild_id,
         )
-        if isinstance(character, Pf2eActor):
-            return pf2e.steps_for(character, ctx.options["weapon"] or "")
+        if system := commands_for(character):
+            return system.steps_for(character, ctx.options["weapon"] or "")
         return []
 
     weapon = next((w for w in weapons if w["name"] == ctx.options["weapon"]), {})
@@ -366,8 +365,8 @@ def stat_autocomplete(ctx: AutocompleteContext):
             ctx.interaction.user.id,
             ctx.interaction.guild_id,
         )
-        if isinstance(character, Pf2eActor):
-            return search(ctx.value, pf2e.rollables(character).keys(), sorted)
+        if system := commands_for(character):
+            return search(ctx.value, system.rollables(character).keys(), sorted)
         return character_not_found
 
     tools = TypeAdapter(Tools).validate_python(res)
