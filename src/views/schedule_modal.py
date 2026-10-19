@@ -166,9 +166,10 @@ class ScheduleModal(Modal):
         )
 
         with Session() as session:
-            if len(session.scalars(stmt).all()):
-                await self.handle_error("Session already exists.", interaction)
-                return
+            exists = bool(session.scalars(stmt).first())
+        if exists:
+            await self.handle_error("Session already exists.", interaction)
+            return
 
         self.mission.image_url = self.children[3].value
         image_bytes = get_image_bytes(self.mission.image_url)
@@ -189,11 +190,11 @@ class ScheduleModal(Modal):
 
             with Session() as session:
                 gm_pc_id = session.scalars(stmt).first()
-                if not gm_pc_id:
-                    await self.handle_error(
-                        f"GM PC {self.children[4].value} not found.", interaction
-                    )
-                    return
+            if not gm_pc_id:
+                await self.handle_error(
+                    f"GM PC {self.children[4].value} not found.", interaction
+                )
+                return
         else:
             gm_pc_id = None
 

@@ -58,11 +58,6 @@ DISCORD_CLIENT_SECRET = os.environ["DISCORD_CLIENT_SECRET"]
 REDIRECT_URI = f"{os.environ['API_URL']}/init"
 
 
-def session_handler():
-    with Session() as session:
-        yield session
-
-
 async def get_bot():
     await discord_client.bot.wait_until_ready()
     return discord_client.bot
@@ -284,7 +279,6 @@ async def upsert_actor(
     # malformed body gets a 422 describing the schema instead of a 401.
     guild_settings: Annotated[GuildSettings, Depends(guild_auth)],
     actor: Annotated[OronderBaseModel, Depends(synced_actor)],
-    session=Depends(session_handler),
 ):
     # dnd5e keeps its own table, shaped like dnd5e's roll data; every other
     # system shares system_actors. See models.game_systems.
@@ -295,8 +289,15 @@ async def upsert_actor(
     # When one character is stored under several actor ids, the copy synced
     # last is the one commands use.
     row.last_synced_at = datetime.now(UTC)
-    session.merge(row)
-    session.commit()
+    # A session opened and closed right here, never a yield dependency:
+    # FastAPI closes those after the response, on the event loop, and these
+    # endpoints query synchronously on that same loop. A burst of deletes once
+    # held every pooled connection waiting for a close the blocked loop could
+    # never run. Don't hold a session across an await anywhere, for the same
+    # reason.
+    with Session() as session:
+        session.merge(row)
+        session.commit()
     # The wiki export renders a dnd5e sheet, so it only knows dnd5e actors.
     if isinstance(actor, Actor) and guild_settings.id in WIKIJS_GUILD_IDS:
         logger.warning(f"Upserting {actor.name} to wiki!")
@@ -304,34 +305,35 @@ async def upsert_actor(
 
 
 @router.delete("/actor/{actor_id}")
-async def delete_actor(
-    actor_id: str, guild_settings=Depends(guild_auth), session=Depends(session_handler)
-):
+async def delete_actor(actor_id: str, guild_settings=Depends(guild_auth)):
     # The id alone does not say which system the actor belongs to, so look in
     # both tables: dnd5e's, then everyone else's.
-    try:
-        actor = (
-            session.query(ActorTable)
-            .filter_by(id=actor_id, guild_id=guild_settings.id)
-            .one()
-        )
-        if guild_settings.id in WIKIJS_GUILD_IDS:
-            logger.warning(f"Deleting {actor.name} from wiki!")
-            wikijs_task_queue.add_task(delete_from_wiki, Actor.model_validate(actor))
-    except NoResultFound:
-        actor = (
-            session.query(SystemActorTable)
-            .filter_by(id=actor_id, guild_id=guild_settings.id)
-            .one_or_none()
-        )
-        if actor is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Actor {actor_id} not found",
-            ) from None
+    with Session() as session:
+        try:
+            actor = (
+                session.query(ActorTable)
+                .filter_by(id=actor_id, guild_id=guild_settings.id)
+                .one()
+            )
+            if guild_settings.id in WIKIJS_GUILD_IDS:
+                logger.warning(f"Deleting {actor.name} from wiki!")
+                wikijs_task_queue.add_task(
+                    delete_from_wiki, Actor.model_validate(actor)
+                )
+        except NoResultFound:
+            actor = (
+                session.query(SystemActorTable)
+                .filter_by(id=actor_id, guild_id=guild_settings.id)
+                .one_or_none()
+            )
+            if actor is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Actor {actor_id} not found",
+                ) from None
 
-    session.delete(actor)
-    session.commit()
+        session.delete(actor)
+        session.commit()
 
 
 @router.get("/init", response_class=HTMLResponse)

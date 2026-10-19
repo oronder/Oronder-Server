@@ -612,10 +612,10 @@ class GM(Cog):
             )
             session.commit()
 
-            await ctx.respond(
-                f"`{abs(xp)}` XP {'added to' if xp > 0 else 'subtracted from'} **{actor_name}** for *{comment}.*",
-                ephemeral=True,
-            )
+        await ctx.respond(
+            f"`{abs(xp)}` XP {'added to' if xp > 0 else 'subtracted from'} **{actor_name}** for *{comment}.*",
+            ephemeral=True,
+        )
 
     @gm_xp_group.command(
         name="delete_adjustment", description="Remove one off Character XP adjustment."
