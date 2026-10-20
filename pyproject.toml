@@ -27,7 +27,7 @@ dependencies = [
     "py-cord==2.8.1",
     "pydantic==2.13.5",
     "python-socketio==5.17.0",
-    "pytz==2026.3.post1",
+    "pytz==2026.4",
     "pytzdata==2020.1",
     "setuptools==84.0.0",
     "SQLAlchemy==2.0.54",
