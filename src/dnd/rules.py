@@ -17,9 +17,14 @@ def ensure_loaded():
 
     quick_rules = dnd.load_json("generated/bookref-quick")
 
+    book = dnd.load_json("book/book-sac")
+    # Newer 5eTools wraps a book's contents as {"bookData": [{"data": [...]}]};
+    # older data has {"data": [...]} at the top.
+    if "data" not in book:
+        book = book["bookData"][0]
     sage_advice_compendium = {
         k["name"]: k["entries"]
-        for i in dnd.load_json("book/book-sac")["data"][0]["entries"][2]["entries"][2:]
+        for i in book["data"][0]["entries"][2]["entries"][2:]
         for j in i["entries"]
         for k in j["entries"]
     }
