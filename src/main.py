@@ -49,7 +49,7 @@ async def lifespan(a: FastAPI):
 
     yield
     logger.critical("SHUTTING DOWN")
-    await wikijs_task_queue.stop_worker
+    await wikijs_task_queue.stop_worker()
     await discord_client.stop()
     discord_task.cancel()
 
