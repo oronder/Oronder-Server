@@ -10,7 +10,7 @@ readme = "README.md"
 license = { text = "MIT" }
 
 dependencies = [
-    "aiohttp==3.14.3",
+    "aiohttp==3.14.4",
     "brotlipy==0.7.0",
     "d20==1.1.2",
     "dateparser==1.4.3",
