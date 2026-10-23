@@ -229,18 +229,28 @@ def roll_damage(damage: str) -> str:
 # --- /lookup character ---------------------------------------------------
 
 
+def identity(actor: Pf2eActor) -> str:
+    """One line saying what the character is, e.g. "Level 3 Dwarf Fighter"."""
+    b = actor.body
+    heritage = " ".join(x for x in (b.heritage or b.ancestry, b.class_) if x)
+    return f"Level {b.level} {heritage}".strip()
+
+
+def is_down(actor: Pf2eActor) -> bool:
+    # Down at 0 HP, as dnd5e's sheet is when dead. pf2e conditions (dying,
+    # unconscious) aren't in the v1 payload, so HP is the only signal.
+    return actor.hp.value <= 0
+
+
 def character_embed(actor: Pf2eActor) -> Embed:
     b = actor.body
-    identity = " ".join(x for x in (b.heritage or b.ancestry, b.class_) if x)
-    description = f"Level {b.level} {identity}".strip()
+    description = identity(actor)
     if b.background:
         description += f" ({b.background})"
-    # Red at 0 HP, as dnd5e's sheet is when dead. pf2e conditions (dying,
-    # unconscious) aren't in the v1 payload, so HP is the only signal.
     embed = Embed(
         title=actor.name,
         description=description,
-        color=Color.red() if actor.hp.value <= 0 else None,
+        color=Color.red() if is_down(actor) else None,
     )
     if actor.portrait_url and actor.portrait_url.startswith("http"):
         embed.set_thumbnail(url=actor.portrait_url)

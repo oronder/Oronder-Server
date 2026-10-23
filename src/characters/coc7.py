@@ -273,17 +273,26 @@ def _chunks(entries: list[str], limit: int = 1024) -> list[str]:
     return out
 
 
-def character_embed(actor: CoC7Actor) -> Embed:
+def identity(actor: CoC7Actor) -> str:
+    """One line saying who the investigator is, e.g. "Antiquarian, age 42"."""
     b = actor.body
-    description = ", ".join(
+    return ", ".join(
         x for x in (b.occupation, b.archetype, b.age and f"age {b.age}") if x
     )
-    down = actor.hp.value <= 0 or any(c.lower() in _DOWN for c in b.conditions)
+
+
+def is_down(actor: CoC7Actor) -> bool:
+    b = actor.body
+    return actor.hp.value <= 0 or any(c.lower() in _DOWN for c in b.conditions)
+
+
+def character_embed(actor: CoC7Actor) -> Embed:
     embed = Embed(
         title=actor.name,
-        description=description or None,
-        color=Color.red() if down else None,
+        description=identity(actor) or None,
+        color=Color.red() if is_down(actor) else None,
     )
+    b = actor.body
     if actor.portrait_url and actor.portrait_url.startswith("http"):
         embed.set_thumbnail(url=actor.portrait_url)
 

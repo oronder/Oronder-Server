@@ -15,7 +15,7 @@ import dnd
 from dnd import SKILLS, TOOLS, clense_damage_roll, ABILITIES, items
 from dnd.items import get_item_price_string, get_item, format_number, get_item_rarity
 from groups import character_description, drop_subcommands, get_actor, invite_link
-from groups.autocomplete import actor_autocomplete, search
+from groups.autocomplete import dnd5e_actor_autocomplete, search
 from models import DowntimeModel
 from models.actor import Actor
 from models.guild_settings import Subscription, GuildSettings
@@ -78,7 +78,9 @@ class Downtime(discord.Cog):
         name="buy", description="Convenience command for Buying a Magic Item."
     )
     @option(
-        "character", description=character_description, autocomplete=actor_autocomplete
+        "character",
+        description=character_description,
+        autocomplete=dnd5e_actor_autocomplete,
     )
     @option(
         "item",
@@ -169,7 +171,9 @@ class Downtime(discord.Cog):
         name="pitfight", description="Convenience command for Pit Fighting."
     )
     @option(
-        "character", description=character_description, autocomplete=actor_autocomplete
+        "character",
+        description=character_description,
+        autocomplete=dnd5e_actor_autocomplete,
     )
     async def command_downtime_fight(
         self, ctx: discord.ApplicationContext, character: str
@@ -223,7 +227,9 @@ class Downtime(discord.Cog):
 
     @downtime_group.command(name="crime", description="Convenience command for Crime.")
     @option(
-        "character", description=character_description, autocomplete=actor_autocomplete
+        "character",
+        description=character_description,
+        autocomplete=dnd5e_actor_autocomplete,
     )
     @option("dc", description="What's the mark?", choices=[10, 15, 20, 25])
     async def command_downtime_crime(
@@ -281,14 +287,17 @@ class Downtime(discord.Cog):
                     return f"Made away with {reward} gp!"
 
         await ctx.respond(
-            view=DowntimeView(stats_to_rolls, wins_to_outcome, ctx.user.id), embed=embed
+            view=DowntimeView(stats_to_rolls, wins_to_outcome, ctx.user.id),
+            embed=embed
         )
 
     @downtime_group.command(
         name="gamble", description="Convenience command for Gambling."
     )
     @option(
-        "character", description=character_description, autocomplete=actor_autocomplete
+        "character",
+        description=character_description,
+        autocomplete=dnd5e_actor_autocomplete,
     )
     @option("ante", description="in gp", min_value=10)
     async def command_downtime_gamble(
