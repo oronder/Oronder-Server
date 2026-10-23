@@ -18,7 +18,12 @@ from dnd import backgrounds as backgrounds_data
 from dnd.items import attack_modes_reversed
 from models.actor import Tools, Details, Actor, Attack, Spell
 from utils import timezones, SUPER_ADMIN_USER_IDS, getLogger, truncate
-from characters import character_for_autocomplete, character_names, commands_for
+from characters import (
+    CHOICE_LIMIT,
+    character_for_autocomplete,
+    character_names,
+    commands_for,
+)
 
 logger = getLogger(__name__)
 
@@ -101,6 +106,25 @@ def actor_autocomplete(ctx: AutocompleteContext):
         character_names(ctx.interaction.user.id, ctx.interaction.guild_id, ctx.value)
         or character_not_found
     )
+
+
+def dnd5e_actor_autocomplete(ctx: AutocompleteContext):
+    """Only dnd5e characters, for commands whose logic is dnd5e-specific
+    (downtime: gold, XP, magic items) and that look the name up with
+    get_actor. Offering a pf2e or CoC7 character here would only have it
+    come back "not found"."""
+    stmt = (
+        select(ActorTable.name)
+        .where(ActorTable.guild_id == ctx.interaction.guild_id)
+        .where(ctx.interaction.user.id == any_(ActorTable.discord_ids))
+        .where(ActorTable.name.icontains(ctx.value or ""))
+        .limit(25)
+    )
+    with Session() as session:
+        names = session.scalars(stmt).all()
+    return [
+        truncate(n, CHOICE_LIMIT) for n in sorted(set(names))
+    ] or character_not_found
 
 
 def actor_gm_autocomplete(ctx: AutocompleteContext):
