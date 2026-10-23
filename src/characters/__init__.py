@@ -5,8 +5,8 @@ models.game_systems). Commands that support more than dnd5e look characters up
 here; everything else keeps using groups.get_actor, which only knows dnd5e.
 
 Each system other than dnd5e has a module here (pf2e, coc7) with the same
-functions -- rollables, roll, attack_names, steps_for, attack and
-character_embed -- and commands_for picks the right one.
+functions -- rollables, roll, attack_names, steps_for, attack, character_embed,
+identity and is_down -- and commands_for picks the right one.
 """
 
 from types import ModuleType

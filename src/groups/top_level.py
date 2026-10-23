@@ -18,7 +18,7 @@ from dnd import (
 from dnd.items import attack_modes
 from dnd import rules
 from characters import commands_for, find_character
-from groups import get_actor, DISPLAY_PRIVATE, invite_link
+from groups import DISPLAY_PRIVATE, invite_link
 from models.actor import Spell
 from models.guild_settings import Subscription
 from routers.socket_namespace import SocketNamespace
@@ -266,18 +266,39 @@ async def action(
         )
         return
 
-    actor, error = get_actor(actor_name, ctx.user.id, ctx.guild_id)
+    # find_character, not get_actor: the character autocomplete offers every
+    # game system's characters, and get_actor only knows dnd5e's, so a pf2e or
+    # CoC7 character it had just offered came back "not found".
+    actor, error = find_character(actor_name, ctx.user.id, ctx.guild_id)
     if error:
         await ctx.respond(**error)
         return
 
+    # The action list is dnd5e's whatever the character's system; the command
+    # only declares intent, so that is good enough for play by post.
+    description = rules.actions.get(action_type)
+    if description is None:
+        await ctx.respond(
+            **logger.err_msg(f"Action {action_type} not found!", ctx.guild_id)
+        )
+        return
+
+    if system := commands_for(actor):
+        down = system.is_down(actor)
+        footer = join_list([actor.name, system.identity(actor)], " | ")
+    else:
+        down = actor.details.dead
+        class_str = "/".join(
+            [f"{k.title()} {v['levels']}" for k, v in actor.classes.items()]
+        )
+        footer = f"{actor.name} | {actor.details.race} | {class_str}"
+
     embed = Embed(
         title=action_type,
         description=comment,
-        color=discord.Color.red() if actor.details.dead else None,
+        color=discord.Color.red() if down else None,
     )
 
-    description = rules.actions[action_type]
     times = [
         t
         if isinstance(t, str)
@@ -295,9 +316,6 @@ async def action(
     for n, v, i in fields:
         embed.add_field(name=n, value=v, inline=i)
 
-    class_str = "/".join(
-        [f"{k.title()} {v['levels']}" for k, v in actor.classes.items()]
-    )
-    embed.set_footer(text=f"{actor.name} | {actor.details.race} | {class_str}")
+    embed.set_footer(text=footer)
 
     await respond_with_long_embed(ctx, embed)
