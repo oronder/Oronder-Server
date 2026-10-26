@@ -30,7 +30,7 @@ dependencies = [
     "pytz==2026.5",
     "pytzdata==2020.1",
     "setuptools==84.2.1",
-    "SQLAlchemy==2.0.55",
+    "SQLAlchemy==2.1.6",
     # Transitive via fastapi, but pinned here too, so `uv lock --upgrade` can't
     # move it: fastapi 0.141 accepts starlette <2, and 1.x already removed an
     # API we use.
