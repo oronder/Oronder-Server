@@ -44,5 +44,6 @@ dependencies = [
 dev = [
     "ruff==0.17.2",
     "mypy==2.4.0",
+    "pytest==9.2.0",
     "types-tabulate==0.10.0.20261006"
 ]
