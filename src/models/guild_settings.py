@@ -141,13 +141,16 @@ class GuildSettings(OronderBaseModel):
             next_run += timedelta(days=days_til_next_run)
         return next_run
 
-    def enqueue_xp(self, actor_id_to_xp: dict):
+    def enqueue_xp(self, actor_id_to_xp: dict[str, int]):
+        """Queue XP totals to send to Foundry when it next connects.
+
+        Values are each character's full total as of now, recomputed from
+        missions and adjustments, so a newer value simply replaces an older
+        queued one, and a character not yet queued is added."""
         if self.pending_xp:
-            for actor_id, xp in actor_id_to_xp:
-                if xp > self.pending_xp[actor_id]:
-                    self.pending_xp[actor_id] = xp
+            self.pending_xp = {**self.pending_xp, **actor_id_to_xp}
         else:
-            self.pending_xp = actor_id_to_xp
+            self.pending_xp = dict(actor_id_to_xp)
 
     def validate_channels(self, guild: Guild, external=False) -> list[str]:
         errs = []
