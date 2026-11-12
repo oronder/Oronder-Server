@@ -105,9 +105,15 @@ timezones: List[str] = [
 time_format = "%m/%d/%Y %I:%M %p"
 
 
+_two_digit_year = re.compile(r"\b(\d{1,2}/\d{1,2}/)(\d{2})\b(?![/\d])")
+
+
 def parse_time(
     time_string: str, timezone_default: str
 ) -> Tuple[Optional[datetime], Optional[str]]:
+    # A two digit year always means this century. Left alone, the fallback
+    # parser prefers future dates and turns a past "8/12/26" into 2126.
+    time_string = _two_digit_year.sub(r"\g<1>20\2", time_string.strip())
     try:
         might_have_tz = (
             time_string[-2:].casefold() not in ["am", "pm"]

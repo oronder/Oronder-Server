@@ -62,20 +62,31 @@ class MissionTable(Base):
         return mission_table
 
 
-async def edit_mission(
-    guild: Guild,
-    mission: Mission,
-    add_event_fun: Callable = (lambda *args, **kwargs: None),
-    image_bytes: bytes | None = None,
-) -> list[str]:
-    """
-    use this one unless you're creating a new mission!
-    """
-    errors = []
+async def _find_event(guild: Guild, event_id: int | None) -> Optional[ScheduledEvent]:
+    """The session's event, asking Discord when the cache does not have it.
 
-    scheduled_event: Optional[ScheduledEvent] = guild.get_scheduled_event(
-        mission.event_id
-    )
+    A cache miss used to be read as "no event", which left a stale event
+    behind when a session was moved into the past."""
+    if not event_id:
+        return None
+    scheduled_event = guild.get_scheduled_event(event_id)
+    if scheduled_event:
+        return scheduled_event
+    try:
+        return await guild.fetch_scheduled_event(event_id)
+    except HTTPException:
+        return None
+
+
+async def _sync_event(
+    guild: Guild, mission: Mission, image_bytes: bytes | None, errors: list[str]
+) -> None:
+    scheduled_event = await _find_event(guild, mission.event_id)
+    if scheduled_event and scheduled_event.status in (
+        ScheduledEventStatus.completed,
+        ScheduledEventStatus.canceled,
+    ):
+        scheduled_event = None
     if (
         scheduled_event
         and scheduled_event.status == ScheduledEventStatus.active
@@ -107,6 +118,27 @@ async def edit_mission(
             description=mission.event_description(guild),
             cover=image_bytes if image_bytes else MISSING,
         )
+
+
+async def edit_mission(
+    guild: Guild,
+    mission: Mission,
+    add_event_fun: Callable = (lambda *args, **kwargs: None),
+    image_bytes: bytes | None = None,
+) -> list[str]:
+    """
+    use this one unless you're creating a new mission!
+    """
+    errors = []
+
+    # Discord refuses some event changes outright (a start time more than
+    # five years out, for one). That must not stop the session itself and its
+    # post from being saved, so event trouble is reported, not raised.
+    try:
+        await _sync_event(guild, mission, image_bytes, errors)
+    except HTTPException as error:
+        logger.error(f"Event sync failed for {mission.title}: {error}")
+        errors.append(f"Could not update the event for {mission.title}: {error.text}")
 
     upset_errors = upsert_mission(guild, mission, add_event_fun)
     errors.extend(upset_errors)
