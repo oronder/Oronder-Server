@@ -4,20 +4,36 @@ import pytest
 
 from utils import parse_time
 
+THIS_YEAR = datetime.now().year
+CENTURY = THIS_YEAR // 100 * 100
+# A two digit year that is already over: last year's.
+LAST_YY = f"{(THIS_YEAR - 1) % 100:02d}"
+
 
 @pytest.mark.parametrize(
     "text",
-    ["8/12/26 9:00 PM", "8/12/26 9pm", "08/12/26 9:00 PM", "8/12/2026 9:00 PM"],
+    [
+        f"8/12/{LAST_YY} 9:00 PM",
+        f"8/12/{LAST_YY} 9pm",
+        f"08/12/{LAST_YY} 9:00 PM",
+    ],
 )
-def test_two_digit_year_is_this_century_even_when_past(text):
+def test_past_two_digit_year_stays_in_this_century(text):
+    """The reported bug: a past date typed with a two digit year was pushed a
+    hundred years into the future."""
     parsed, error = parse_time(text, "US/Central")
     assert error is None
-    assert (parsed.year, parsed.month, parsed.day, parsed.hour) == (2026, 8, 12, 21)
+    assert (parsed.year, parsed.month, parsed.day, parsed.hour) == (
+        THIS_YEAR - 1,
+        8,
+        12,
+        21,
+    )
 
 
-def test_two_digit_year_in_the_future():
-    parsed, _ = parse_time("12/25/45 8pm", "US/Central")
-    assert (parsed.year, parsed.month, parsed.day) == (2045, 12, 25)
+def test_future_two_digit_year_is_this_century():
+    parsed, _ = parse_time("12/25/99 8pm", "US/Central")
+    assert (parsed.year, parsed.month, parsed.day) == (CENTURY + 99, 12, 25)
 
 
 def test_four_digit_year_untouched():
