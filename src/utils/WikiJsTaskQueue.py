@@ -1,7 +1,6 @@
 import asyncio
 import time
-from asyncio import Future
-from typing import Awaitable, Any
+from typing import Callable, Any
 
 from integrations import wikijs
 from utils import getLogger
@@ -24,17 +23,28 @@ class WikiJsTaskQueue:
             cls._instance._valid = wikijs.valid
         return cls._instance
 
-    async def add_task(self, coro: Awaitable[Any], *args, **kwargs) -> None:
-        """Enqueue a coroutine (callable returning an awaitable)."""
+    def add_task(self, func: Callable[..., Any], *args, **kwargs) -> None:
+        """Enqueue a plain function to run later, off the event loop.
+
+        Deliberately not a coroutine: callers are request handlers that must
+        not await while holding a database session, and the queue is
+        unbounded so there is nothing to wait for."""
         if self._instance._valid:
-            await self._queue.put((coro, args, kwargs))
-            logger.warning(f"{len(self._queue)} {coro=} {args=} {kwargs=}")
+            self._queue.put_nowait((func, args, kwargs))
+            logger.info(f"{self._queue.qsize()} queued, added {func.__name__}")
+
+    @staticmethod
+    async def _run(func: Callable[..., Any], *args, **kwargs) -> None:
+        try:
+            await asyncio.to_thread(func, *args, **kwargs)
+        except Exception as error:
+            logger.error(f"Wiki task {func.__name__} failed: {error}")
 
     async def _worker(self) -> None:
         """Background worker that pulls tasks from the queue and launches them."""
         while True:
             try:
-                coro, args, kwargs = await self._queue.get()
+                func, args, kwargs = await self._queue.get()
             except asyncio.CancelledError:
                 break
 
@@ -46,8 +56,9 @@ class WikiJsTaskQueue:
                     break
                 await asyncio.sleep(0.5)  # Poll every 500ms
 
-            # Launch the task
-            asyncio.create_task(coro(*args, **kwargs))
+            # Launch the task. The wiki functions are blocking HTTP calls, so
+            # they run in a thread rather than on the event loop.
+            asyncio.create_task(self._run(func, *args, **kwargs))
             self._last_start = time.monotonic()
 
             # Mark the queue item as done

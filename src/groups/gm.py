@@ -431,6 +431,11 @@ class GM(Cog):
             date_time, time_error = parse_time(date_time, guild_settings.timezone)
             if time_error:
                 errors.append(time_error)
+            elif date_time > datetime.now(pytz.UTC) + timedelta(days=5 * 365):
+                # Discord will not schedule an event further out than this.
+                errors.append(
+                    f"Date time {format_dt(date_time)} is more than five years away."
+                )
             else:
                 if (
                     datetime.now(pytz.UTC) - timedelta(seconds=1)
